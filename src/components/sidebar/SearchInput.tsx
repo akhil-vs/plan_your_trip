@@ -13,18 +13,22 @@ export function SearchInput() {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const insertWaypointNear = useTripStore((s) => s.insertWaypointNear);
-  const setViewState = useMapStore((s) => s.setViewState);
+  const { setViewState, viewState } = useMapStore();
   const debounceRef = useRef<NodeJS.Timeout>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const doSearch = useCallback(async (q: string) => {
-    if (q.length < 2) {
+    if (q.length < 3) {
       setResults([]);
       return;
     }
     setLoading(true);
     try {
-      const data = await searchLocations(q);
+      const proximity =
+        viewState.longitude !== 0 || viewState.latitude !== 0
+          ? { lng: viewState.longitude, lat: viewState.latitude }
+          : undefined;
+      const data = await searchLocations(q, proximity);
       setResults(data);
       setOpen(true);
     } catch {
@@ -32,12 +36,12 @@ export function SearchInput() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [viewState.longitude, viewState.latitude]);
 
   const handleChange = (value: string) => {
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSearch(value), 300);
+    debounceRef.current = setTimeout(() => doSearch(value), 450);
   };
 
   const handleSelect = (result: SearchResult) => {

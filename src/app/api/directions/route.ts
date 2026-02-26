@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 
 export const dynamic = "force-dynamic";
 
 const MAPBOX_MAX_WAYPOINTS = 25;
+const DIRECTIONS_CACHE_REVALIDATE = 2592000; // 30 days
 
 function parseCoordinates(coordsStr: string): [number, number][] {
   return coordsStr.split(";").map((pair) => {
@@ -15,7 +17,7 @@ function formatCoordinates(coords: [number, number][]): string {
   return coords.map((c) => c.join(",")).join(";");
 }
 
-async function fetchMapboxRoute(
+async function fetchMapboxRouteDirect(
   coordinates: string,
   profile: string,
   token: string
@@ -27,8 +29,7 @@ async function fetchMapboxRoute(
     steps: "false",
   });
   const res = await fetch(
-    `https://api.mapbox.com/directions/v5/${profile}/${coordinates}?${params}`,
-    { cache: "no-store" }
+    `https://api.mapbox.com/directions/v5/${profile}/${coordinates}?${params}`
   );
   if (!res.ok) throw new Error("Directions request failed");
   const data = await res.json();
@@ -73,24 +74,13 @@ export async function GET(req: NextRequest) {
   }
 
   if (allCoords.length <= MAPBOX_MAX_WAYPOINTS) {
-    const params = new URLSearchParams({
-      access_token: token,
-      geometries: "geojson",
-      overview: "full",
-      steps: "false",
-    });
-    const res = await fetch(
-      `https://api.mapbox.com/directions/v5/${mapboxProfile}/${coordinatesParam}?${params}`,
-      { cache: "no-store" }
+    const getCachedRoute = unstable_cache(
+      () => fetchMapboxRouteDirect(coordinatesParam, mapboxProfile, token),
+      ["directions", coordinatesParam, mapboxProfile],
+      { revalidate: DIRECTIONS_CACHE_REVALIDATE }
     );
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: "Directions request failed" },
-        { status: res.status }
-      );
-    }
-    const data = await res.json();
-    const route = data.routes?.[0];
+
+    const route = await getCachedRoute().catch(() => null);
     if (!route) {
       return NextResponse.json(
         { error: "No route found" },
@@ -109,7 +99,7 @@ export async function GET(req: NextRequest) {
       },
       {
         headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Cache-Control": "public, s-maxage=2592000, stale-while-revalidate",
         },
       }
     );
@@ -132,7 +122,18 @@ export async function GET(req: NextRequest) {
 
   for (let i = 0; i < chunks.length; i++) {
     const chunkCoordsStr = formatCoordinates(chunks[i]);
-    const route = await fetchMapboxRoute(chunkCoordsStr, mapboxProfile, token);
+    const getCachedChunk = unstable_cache(
+      () => fetchMapboxRouteDirect(chunkCoordsStr, mapboxProfile, token),
+      ["directions", chunkCoordsStr, mapboxProfile],
+      { revalidate: DIRECTIONS_CACHE_REVALIDATE }
+    );
+    const route = await getCachedChunk().catch(() => null);
+    if (!route) {
+      return NextResponse.json(
+        { error: "No route found" },
+        { status: 404 }
+      );
+    }
 
     totalDistance += route.distance;
     totalDuration += route.duration;
@@ -163,7 +164,7 @@ export async function GET(req: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Cache-Control": "public, s-maxage=2592000, stale-while-revalidate",
       },
     }
   );
