@@ -36,19 +36,28 @@ function LoginForm() {
     setLoading(true);
     setError("");
 
-    const formData = new FormData(e.currentTarget);
-    const res = await signIn("credentials", {
-      email: formData.get("email"),
-      password: formData.get("password"),
-      redirect: false,
-    });
+    try {
+      const formData = new FormData(e.currentTarget);
+      const res = await signIn("credentials", {
+        email: formData.get("email"),
+        password: formData.get("password"),
+        callbackUrl,
+        redirect: false,
+      });
 
-    if (res?.error) {
-      setError("Invalid email or password");
+      if (res?.error) {
+        setError("Invalid email or password");
+      } else if (res?.ok) {
+        // Full page redirect ensures new session cookie is sent (fixes Vercel production)
+        window.location.href = res?.url ?? callbackUrl;
+        return;
+      } else {
+        setError("Sign in failed. Please try again.");
+      }
+    } catch {
+      setError("Sign in failed. Please try again.");
+    } finally {
       setLoading(false);
-    } else {
-      router.push(callbackUrl);
-      router.refresh();
     }
   }
 
