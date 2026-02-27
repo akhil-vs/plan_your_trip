@@ -2,10 +2,20 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function middleware(req: NextRequest) {
-  const token = await getToken({
-    req,
-    secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET,
-  });
+  const secret = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
+  const token =
+    (await getToken({
+      req,
+      secret,
+      // In production, NextAuth uses the secure cookie prefix.
+      secureCookie: req.nextUrl.protocol === "https:",
+    })) ||
+    (await getToken({
+      req,
+      secret,
+      // Fallback for local/dev or old cookies without secure prefix.
+      secureCookie: false,
+    }));
   const isLoggedIn = !!token;
   const { pathname } = req.nextUrl;
 
