@@ -40,23 +40,42 @@ export async function POST(req: NextRequest) {
     );
 
   } catch (error: unknown) {
-    console.error(error);
-    let message: string;
-    if (error instanceof Error) {
-      message = error.message;
-    } else if (error && typeof (error as { message?: unknown }).message === "string") {
-      message = (error as { message: string }).message;
-    } else if (typeof error === "string") {
-      message = error;
-    } else {
-      try {
-        message = JSON.stringify(error);
-      } catch {
-        message = String(error);
+    console.error("Register error:", error);
+    const getMessage = (): string => {
+      if (error instanceof Error) {
+        const e = error as Error & { cause?: unknown; code?: string; meta?: unknown };
+        let msg = error.message;
+        // Prefer cause when parent message is generic
+        const cause = e.cause;
+        if (
+          (msg === "Internal server error" || msg === "Internal Server Error") &&
+          cause
+        ) {
+          if (cause instanceof Error) msg = cause.message;
+          else if (typeof (cause as { message?: string }).message === "string") {
+            msg = (cause as { message: string }).message;
+          }
+        }
+        // Prisma/DB errors: code and meta give the real details
+        if (e.code) msg = `${e.code}: ${msg}`;
+        if (e.meta && typeof e.meta === "object") {
+          const metaStr = JSON.stringify(e.meta).slice(0, 300);
+          if (metaStr !== "{}") msg = `${msg} | meta: ${metaStr}`;
+        }
+        return msg;
       }
-    }
+      if (error && typeof (error as { message?: unknown }).message === "string") {
+        return (error as { message: string }).message;
+      }
+      if (typeof error === "string") return error;
+      try {
+        return JSON.stringify(error);
+      } catch {
+        return String(error);
+      }
+    };
     return NextResponse.json(
-      { error: message },
+      { error: getMessage() },
       { status: 500 }
     );
   }
