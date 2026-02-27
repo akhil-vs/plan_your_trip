@@ -14,7 +14,7 @@ import {
 const features = [
   {
     icon: Route,
-    title: "Multi-Stop Routes",
+    title: "Multi - Stop Routes",
     description:
       "Plan routes with unlimited stops. Visualize your entire journey on an interactive map with distance and duration estimates.",
   },
