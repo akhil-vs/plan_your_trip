@@ -21,7 +21,7 @@ A full-stack travel planning web application with interactive Mapbox maps, world
 - **Map:** Mapbox GL JS via react-map-gl
 - **State:** Zustand
 - **Auth:** NextAuth.js v5
-- **Database:** Prisma + SQLite (dev) / PostgreSQL (prod)
+- **Database:** Prisma + PostgreSQL (required for Vercel; use Neon/Docker for local)
 
 ## Setup
 
@@ -52,12 +52,17 @@ OPENTRIPMAP_API_KEY=your_opentripmap_key
 GEOAPIFY_API_KEY=your_geoapify_key
 NEXTAUTH_SECRET=any_random_secret_string
 NEXTAUTH_URL=http://localhost:3000
-DATABASE_URL=file:./dev.db
+# PostgreSQL required (SQLite does not work on Vercel). Use Neon free tier or Docker.
+DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 ```
 
-Note: Both `MAPBOX_ACCESS_TOKEN` and `NEXT_PUBLIC_MAPBOX_TOKEN` should be set to the same Mapbox token. The first is used server-side for API proxying, the second is used client-side for map rendering.
+Note: Both `MAPBOX_ACCESS_TOKEN` and `NEXT_PUBLIC_MAPBOX_TOKEN` should be set to the same Mapbox token.
+
+**Vercel deployment:** See [DEPLOYMENT.md](./DEPLOYMENT.md) for env vars and database setup. The first is used server-side for API proxying, the second is used client-side for map rendering.
 
 ### 4. Set up database
+
+Use a PostgreSQL database (Neon free tier, Docker, or Vercel Postgres). Then:
 
 ```bash
 npx prisma db push
