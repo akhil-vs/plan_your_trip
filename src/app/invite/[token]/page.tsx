@@ -29,7 +29,7 @@ export default function InviteAcceptPage() {
       setLoading(false);
       return;
     }
-    setMessage("Invite accepted. Redirecting to trip...");
+    setMessage("Invite accepted. Redirecting to itinerary...");
     router.push(`/planner/${data.tripId}`);
   };
 
@@ -80,7 +80,7 @@ export default function InviteAcceptPage() {
           {error && <p className="text-sm text-red-500">{error}</p>}
           <Button onClick={handleAccept} disabled={loading || !token} className="w-full gap-2">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-            Accept Invite
+            Accept invite
           </Button>
         </CardContent>
       </Card>

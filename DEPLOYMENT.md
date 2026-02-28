@@ -17,6 +17,10 @@ Add **all** of these in the Vercel dashboard:
 | `NEXTAUTH_SECRET` | Random 32+ char string | Yes |
 | `NEXTAUTH_URL` | `https://your-app.vercel.app` | Yes |
 | `DATABASE_URL` | `postgresql://...` | Yes |
+| `RESEND_API_KEY` | `re_xxxxx` | Optional* |
+| `INVITE_EMAIL_FROM` | `PlanYourTrip <team@yourdomain.com>` | Optional* |
+
+\* Needed if you want automatic collaboration invite emails. Without these, invites are still created and shareable via invite link.
 
 ### Critical: NEXTAUTH_URL
 
@@ -89,9 +93,10 @@ Then run `npx prisma db push` to create tables.
 
 ## Quick checklist
 
-- [ ] All 7 env vars set in Vercel
+- [ ] All required env vars set in Vercel
 - [ ] `NEXTAUTH_URL` set to `https://your-app.vercel.app`
 - [ ] `DATABASE_URL` set to a PostgreSQL connection string (not `file:./dev.db`)
+- [ ] (`Optional`) `RESEND_API_KEY` + `INVITE_EMAIL_FROM` set for invite emails
 - [ ] Prisma schema uses `provider = "postgresql"`
 - [ ] Migrations or `prisma db push` run against production DB
 - [ ] Project redeployed after changes

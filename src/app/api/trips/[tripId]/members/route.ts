@@ -15,15 +15,33 @@ export async function GET(
   const { tripId } = await params;
   const access = await getTripAccess(tripId, session.user.id);
   if (!access) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
 
-  const members = await prisma.tripMember.findMany({
-    where: { tripId },
-    orderBy: { createdAt: "asc" },
-    include: { user: { select: { id: true, name: true, email: true } } },
-  });
-  return NextResponse.json(members);
+  const [members, owner] = await Promise.all([
+    prisma.tripMember.findMany({
+      where: { tripId },
+      orderBy: { createdAt: "asc" },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    }),
+    prisma.user.findUnique({
+      where: { id: access.trip.userId },
+      select: { id: true, name: true, email: true },
+    }),
+  ]);
+
+  const nonOwnerMembers = members.filter((member) => member.user.id !== access.trip.userId);
+  if (!owner) {
+    return NextResponse.json(nonOwnerMembers);
+  }
+
+  const ownerMember = {
+    id: `owner-${tripId}`,
+    role: "OWNER" as const,
+    user: owner,
+  };
+
+  return NextResponse.json([ownerMember, ...nonOwnerMembers]);
 }
 
 export async function POST(

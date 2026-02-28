@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!trip) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
 
   const template = await prisma.tripTemplate.create({

@@ -19,7 +19,7 @@ export async function POST(
   }
   if (access.trip.status !== "FINALIZED") {
     return NextResponse.json(
-      { error: "Trip must be finalized before publishing" },
+      { error: "Itinerary must be finalized before publishing" },
       { status: 400 }
     );
   }

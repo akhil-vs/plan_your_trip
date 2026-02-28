@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(trip, { status: 201 });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to save trip";
+      error instanceof Error ? error.message : "Failed to save itinerary";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

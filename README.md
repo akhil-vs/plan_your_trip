@@ -13,6 +13,19 @@ A full-stack travel planning web application with interactive Mapbox maps, world
 - **Drag & Drop** - Reorder waypoints by dragging in the sidebar
 - **User Accounts** - Sign up, save trips, edit and revisit them
 - **Adjustable Radius** - Configure search radius (1-50 km) for POI discovery
+- **Collaboration** - Invite editors/viewers and work together in real time
+- **Activity Timeline** - See who changed what across trip lifecycle events
+- **Premium PDF Export** - Branded itinerary layout with day-by-day trip cards
+
+## Packaging
+
+PlanYourTrip is structured around clear value ladders:
+
+- **Free** - Solo planning, route builder, core day planning, basic export
+- **Pro** - Collaboration, activity timeline, premium PDF, advanced optimization controls
+- **Team** - Shared workspace, role-based controls, team onboarding/support
+
+This keeps monetization tied to professional value (reliability, coordination, and presentation quality), not basic usability.
 
 ## Tech Stack
 
@@ -52,6 +65,10 @@ OPENTRIPMAP_API_KEY=your_opentripmap_key
 GEOAPIFY_API_KEY=your_geoapify_key
 NEXTAUTH_SECRET=any_random_secret_string
 NEXTAUTH_URL=http://localhost:3000
+# Optional - enables automatic collaboration invite emails via Resend
+RESEND_API_KEY=re_xxxxx
+# Optional - must be verified in Resend for production delivery
+INVITE_EMAIL_FROM="PlanYourTrip <onboarding@resend.dev>"
 # PostgreSQL required (SQLite does not work on Vercel). Use Neon free tier or Docker.
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 ```

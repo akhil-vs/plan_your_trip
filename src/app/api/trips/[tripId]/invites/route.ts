@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
+import { sendTripInviteEmail } from "@/lib/email";
 
 export async function GET(
   _req: NextRequest,
@@ -70,6 +71,20 @@ export async function POST(
     },
   });
 
+  const trip = await prisma.trip.findUnique({
+    where: { id: tripId },
+    select: { name: true },
+  });
+
+  const acceptUrl = `${req.nextUrl.origin}/invite/${invite.token}`;
+  const emailResult = await sendTripInviteEmail({
+    inviteeEmail: email,
+    inviterName: session.user.name || session.user.email || "A collaborator",
+    tripName: trip?.name || "Untitled Itinerary",
+    role,
+    acceptUrl,
+  });
+
   await createTripEvent(
     tripId,
     "trip.invite.created",
@@ -80,7 +95,9 @@ export async function POST(
 
   return NextResponse.json({
     ...invite,
-    acceptUrl: `${req.nextUrl.origin}/invite/${invite.token}`,
+    acceptUrl,
+    emailDelivered: emailResult.delivered,
+    emailWarning: emailResult.delivered ? null : emailResult.reason,
   });
 }
 

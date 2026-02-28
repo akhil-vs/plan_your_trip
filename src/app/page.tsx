@@ -14,7 +14,7 @@ import {
 const features = [
   {
     icon: Route,
-    title: "Multi - Stop Routes",
+    title: "Multi-Stop Routes",
     description:
       "Plan routes with unlimited stops. Visualize your entire journey on an interactive map with distance and duration estimates.",
   },
@@ -44,9 +44,9 @@ const features = [
   },
   {
     icon: Star,
-    title: "Save & Revisit",
+    title: "Save & Collaborate",
     description:
-      "Create an account to save your trip plans, edit them later, and keep all your travel ideas organized.",
+      "Create an account to save itineraries, collaborate with others, and keep every travel plan organized.",
   },
 ];
 
@@ -63,11 +63,14 @@ export default function HomePage() {
             </span>
           </Link>
           <div className="flex items-center gap-3">
+            <Link href="/pricing">
+              <Button variant="ghost">Pricing</Button>
+            </Link>
             <Link href="/auth/login">
-              <Button variant="ghost">Sign In</Button>
+              <Button variant="ghost">Sign in</Button>
             </Link>
             <Link href="/auth/register">
-              <Button>Get Started</Button>
+              <Button>Get started</Button>
             </Link>
           </div>
         </div>
@@ -78,29 +81,28 @@ export default function HomePage() {
         <div className="max-w-4xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 bg-blue-100 text-blue-700 px-4 py-1.5 rounded-full text-sm font-medium mb-6">
             <Search className="h-4 w-4" />
-            Explore the world, your way
+            Plan with clarity and confidence
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-gray-900 mb-6">
             Plan Your Perfect
             <span className="bg-gradient-to-r from-blue-600 to-emerald-500 bg-clip-text text-transparent">
               {" "}
-              Trip Route
+              Travel Itinerary
             </span>
           </h1>
           <p className="text-base sm:text-lg lg:text-xl text-gray-600 max-w-2xl mx-auto mb-8 sm:mb-10 px-1">
-            Create detailed travel routes on an interactive map. Discover
-            attractions, find restaurants, book stays, and plan every detail of
-            your journey.
+            Build polished itineraries on an interactive map. Discover attractions,
+            coordinate with collaborators, and export plans that are ready to share.
           </p>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4 w-full sm:w-auto max-w-sm sm:max-w-none mx-auto">
             <Link href="/auth/register" className="w-full sm:w-auto">
               <Button size="lg" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation">
-                Start Planning
+                Start planning
               </Button>
             </Link>
             <Link href="/auth/login" className="w-full sm:w-auto">
               <Button size="lg" variant="outline" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation">
-                Sign In
+                Sign in
               </Button>
             </Link>
           </div>
@@ -112,11 +114,11 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12 sm:mb-16">
             <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4">
-              Everything you need to plan your trip
+              Everything you need for premium trip planning
             </h2>
             <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              From route planning to discovering local gems, we&apos;ve got all
-              the tools you need.
+              From route design to collaboration and export, every step is built
+              for a professional planning experience.
             </p>
           </div>
           <div className="grid gap-6 sm:gap-8 md:grid-cols-2 lg:grid-cols-3">
@@ -138,15 +140,60 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* Pricing preview */}
+      <section className="py-16 px-4 bg-gray-50 border-y">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-10">
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-3">
+              Plans that scale with your planning depth
+            </h2>
+            <p className="text-gray-600 max-w-2xl mx-auto">
+              Start free for solo planning, then upgrade when you need deeper collaboration,
+              richer exports, and advanced optimization controls.
+            </p>
+          </div>
+          <div className="grid gap-5 md:grid-cols-3">
+            <div className="rounded-xl border bg-white p-5">
+              <p className="text-sm font-semibold text-gray-900">Free</p>
+              <p className="text-2xl font-bold mt-1">$0</p>
+              <p className="text-sm text-muted-foreground mt-2">
+                Core itinerary planning for solo travelers.
+              </p>
+            </div>
+            <div className="rounded-xl border-2 border-blue-500 bg-white p-5 shadow-sm">
+              <p className="text-sm font-semibold text-blue-700">Pro</p>
+              <p className="text-2xl font-bold mt-1">$9/mo</p>
+              <p className="text-sm text-muted-foreground mt-2">
+                Collaboration, activity timeline, premium PDF, and advanced optimization.
+              </p>
+            </div>
+            <div className="rounded-xl border bg-white p-5">
+              <p className="text-sm font-semibold text-gray-900">Team</p>
+              <p className="text-2xl font-bold mt-1">$29/mo</p>
+              <p className="text-sm text-muted-foreground mt-2">
+                Shared workspace, role controls, and team support.
+              </p>
+            </div>
+          </div>
+          <div className="text-center mt-8">
+            <Link href="/pricing">
+              <Button variant="outline" size="lg">
+                View full pricing
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* CTA */}
       <section className="py-20 px-4 bg-gradient-to-r from-blue-600 to-emerald-600">
         <div className="max-w-3xl mx-auto text-center">
           <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
-            Ready to explore?
+            Ready to plan with confidence?
           </h2>
           <p className="text-lg text-blue-100 mb-8">
-            Join thousands of travelers who plan their trips with us. It&apos;s
-            free to get started.
+            Join travelers who plan with clarity, collaborate smoothly, and share
+            polished itineraries.
           </p>
           <Link href="/auth/register">
             <Button
@@ -154,7 +201,7 @@ export default function HomePage() {
               variant="secondary"
               className="text-lg px-8 py-6"
             >
-              Create Free Account
+              Create free account
             </Button>
           </Link>
         </div>

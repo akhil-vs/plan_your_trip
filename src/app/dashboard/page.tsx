@@ -215,7 +215,7 @@ export default function DashboardPage() {
             <Link href="/planner">
               <Button size="sm" className="gap-1.5 min-h-9 min-w-9 sm:min-w-0">
                 <Plus className="h-4 w-4 shrink-0" />
-                <span className="hidden sm:inline">New Trip</span>
+                <span className="hidden sm:inline">New itinerary</span>
               </Button>
             </Link>
             <DropdownMenu>
@@ -252,7 +252,7 @@ export default function DashboardPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Your Trips</h1>
           <p className="text-muted-foreground mt-1">
-            Manage and continue planning your travel routes
+            Manage, refine, and share your itineraries
           </p>
         </div>
 
@@ -281,7 +281,7 @@ export default function DashboardPage() {
                       disabled={templateLoadingId === template.id}
                       onClick={() => handleUseTemplate(template.id)}
                     >
-                      {templateLoadingId === template.id ? "Creating trip..." : "Use Template"}
+                      {templateLoadingId === template.id ? "Creating itinerary..." : "Start from Template"}
                     </Button>
                   </CardContent>
                 </Card>
@@ -303,14 +303,40 @@ export default function DashboardPage() {
               No trips yet
             </h2>
             <p className="text-muted-foreground mb-6">
-              Start planning your first adventure
+              Create your first itinerary in three guided steps
             </p>
+            <div className="max-w-xl mx-auto mb-6 grid sm:grid-cols-3 gap-3 text-left">
+              <div className="rounded-lg border bg-white p-3">
+                <p className="text-xs font-semibold text-blue-700">1. Pick a starter</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Use a quick-start template or start blank.
+                </p>
+              </div>
+              <div className="rounded-lg border bg-white p-3">
+                <p className="text-xs font-semibold text-blue-700">2. Add key stops</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Add cities, attractions, and must-visit places.
+                </p>
+              </div>
+              <div className="rounded-lg border bg-white p-3">
+                <p className="text-xs font-semibold text-blue-700">3. Finalize & share</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Finalize your itinerary, export PDF, and invite collaborators.
+                </p>
+              </div>
+            </div>
             <Link href="/planner">
               <Button size="lg" className="gap-2">
                 <Plus className="h-5 w-5" />
-                Create Your First Trip
+                Create Your First Itinerary
               </Button>
             </Link>
+            {templates.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-4">
+                You also have {templates.length} personal template
+                {templates.length !== 1 ? "s" : ""} ready above.
+              </p>
+            )}
           </div>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -358,7 +384,7 @@ export default function DashboardPage() {
                           onClick={(e) => handleCopyLink(e, trip.id)}
                         >
                           <Share2 className="h-4 w-4 mr-2" />
-                          {copiedId === trip.id ? "Copied!" : "Copy link"}
+                          {copiedId === trip.id ? "Link copied" : "Copy share link"}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={(e) => handleShareWhatsApp(e, trip.id)}
@@ -385,7 +411,7 @@ export default function DashboardPage() {
                           disabled={trip.status !== "FINALIZED"}
                         >
                           <FileDown className="h-4 w-4 mr-2" />
-                          Export PDF
+                          Export itinerary PDF
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -396,7 +422,7 @@ export default function DashboardPage() {
                           className="text-red-600"
                         >
                           <Trash2 className="h-4 w-4 mr-2" />
-                          Delete
+                          Delete itinerary
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -439,7 +465,7 @@ export default function DashboardPage() {
 
       {copiedId && (
         <div className="fixed bottom-4 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-6 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center">
-          Link copied to clipboard
+          Share link copied to clipboard
         </div>
       )}
     </div>

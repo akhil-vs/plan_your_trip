@@ -41,7 +41,7 @@ export default function SharedTripPage() {
       .then(async (res) => {
         if (!res.ok) {
           const data = await res.json().catch(() => null);
-          throw new Error(data?.error || "Failed to load shared trip");
+          throw new Error(data?.error || "Failed to load shared itinerary");
         }
         return res.json();
       })
@@ -51,7 +51,7 @@ export default function SharedTripPage() {
       })
       .catch((err: unknown) => {
         if (!mounted) return;
-        setError(err instanceof Error ? err.message : "Failed to load shared trip");
+        setError(err instanceof Error ? err.message : "Failed to load shared itinerary");
       })
       .finally(() => {
         if (!mounted) return;
@@ -92,11 +92,11 @@ export default function SharedTripPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shareId }),
       });
-      if (!res.ok) throw new Error("Failed to save this trip");
+      if (!res.ok) throw new Error("Failed to save this itinerary");
       const data = await res.json();
       router.push(`/planner/${data.id}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to save this trip");
+      setError(err instanceof Error ? err.message : "Failed to save this itinerary");
       setCloning(false);
     }
   };
@@ -110,13 +110,13 @@ export default function SharedTripPage() {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-sm text-muted-foreground">Loading shared trip...</div>;
+    return <div className="p-8 text-center text-sm text-muted-foreground">Loading shared itinerary...</div>;
   }
 
   if (error || !trip) {
     return (
       <div className="p-8 text-center">
-        <p className="text-red-600">{error || "Shared trip not found"}</p>
+        <p className="text-red-600">{error || "Shared itinerary not found"}</p>
         <Link href="/">
           <Button className="mt-4">Go Home</Button>
         </Link>
@@ -141,11 +141,11 @@ export default function SharedTripPage() {
             <div className="flex flex-wrap items-center gap-2 mb-5">
               <Button onClick={handleClone} disabled={cloning} className="gap-2">
                 <Route className="h-4 w-4" />
-                {cloning ? "Saving..." : "Save to My Trips"}
+                {cloning ? "Saving..." : "Save itinerary"}
               </Button>
               <Button variant="outline" onClick={handleCopy} className="gap-2">
                 <Copy className="h-4 w-4" />
-                {copying ? "Copied" : "Copy Link"}
+                {copying ? "Link copied" : "Copy share link"}
               </Button>
             </div>
 

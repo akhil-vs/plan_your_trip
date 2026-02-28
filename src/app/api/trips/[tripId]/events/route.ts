@@ -24,7 +24,29 @@ export async function GET(
   }
 
   const url = new URL(req.url);
+  const historyLimit = Math.min(
+    100,
+    Math.max(1, Number(url.searchParams.get("limit") || 30))
+  );
+  const historyOnly = url.searchParams.get("mode") === "history";
   const initialSince = Number(url.searchParams.get("since") || 0);
+
+  if (historyOnly) {
+    const events = await prisma.tripChangeEvent.findMany({
+      where: { tripId },
+      orderBy: { createdAt: "desc" },
+      take: historyLimit,
+    });
+    return NextResponse.json(
+      events.map((evt) => ({
+        id: evt.id,
+        type: evt.eventType,
+        payload: evt.payload,
+        actorId: evt.actorId,
+        createdAt: evt.createdAt,
+      }))
+    );
+  }
 
   const encoder = new TextEncoder();
   let closed = false;

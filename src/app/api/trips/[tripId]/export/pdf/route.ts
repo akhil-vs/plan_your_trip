@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canViewTrip, getTripAccess } from "@/lib/tripAccess";
-import { buildSimplePdf } from "@/lib/pdf";
+import { buildTripItineraryPdf } from "@/lib/pdf";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export async function GET(
   }
   if (access.trip.status !== "FINALIZED") {
     return NextResponse.json(
-      { error: "Trip must be finalized before PDF export" },
+      { error: "Itinerary must be finalized before PDF export" },
       { status: 400 }
     );
   }
@@ -36,59 +36,45 @@ export async function GET(
     },
   });
   if (!trip) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
-
-  const lines: string[] = [];
-  lines.push(`Status: ${trip.status} ${trip.isPublic ? "(Published)" : ""}`);
-  lines.push(`Owner: ${trip.user.name} <${trip.user.email}>`);
-  lines.push(`Collaborators: ${trip.members.length}`);
-  lines.push(`Created: ${trip.createdAt.toISOString()}`);
-  lines.push(`Updated: ${trip.updatedAt.toISOString()}`);
-  lines.push("");
-  lines.push("Route Summary");
-  lines.push(`Waypoints: ${trip.waypoints.length}`);
-  lines.push(`Day Plans: ${trip.dayPlans.length}`);
-  lines.push("");
-  lines.push("Collaborators");
-  for (const member of trip.members) {
-    lines.push(`- ${member.user.name} <${member.user.email}> (${member.role})`);
-  }
-  lines.push("");
-  lines.push("Day-wise Itinerary");
 
   const waypointById = new Map(trip.waypoints.map((wp) => [wp.id, wp]));
-  trip.dayPlans.forEach((day) => {
-    lines.push(`Day ${day.day}`);
-    lines.push(`Travel Minutes: ${day.estimatedTravelMinutes}`);
-    const ids =
-      day.waypointIds.length > 0
-        ? day.waypointIds
-        : day.waypointIndexes.map((idx) => trip.waypoints[idx]?.id).filter(Boolean);
-    if (ids.length === 0) {
-      lines.push("- No stops");
-      lines.push("");
-      return;
-    }
-    ids.forEach((id, index) => {
-      const wp = waypointById.get(id);
-      if (!wp) return;
-      const timing = `${Math.floor(wp.openMinutes / 60)
-        .toString()
-        .padStart(2, "0")}:${(wp.openMinutes % 60)
-        .toString()
-        .padStart(2, "0")} - ${Math.floor(wp.closeMinutes / 60)
-        .toString()
-        .padStart(2, "0")}:${(wp.closeMinutes % 60).toString().padStart(2, "0")}`;
-      lines.push(`${index + 1}. ${wp.name}`);
-      lines.push(`   Visit: ${wp.visitMinutes} min | Open: ${timing}`);
-      lines.push(`   Notes: ${wp.notes?.trim() || "-"}`);
-      lines.push("   Map: [snapshot placeholder]");
-    });
-    lines.push("");
+  const pdfBuffer = buildTripItineraryPdf({
+    tripName: trip.name,
+    status: trip.status,
+    isPublic: trip.isPublic,
+    ownerName: trip.user.name,
+    ownerEmail: trip.user.email,
+    createdAtIso: trip.createdAt.toISOString(),
+    updatedAtIso: trip.updatedAt.toISOString(),
+    collaborators: trip.members.map((member) => ({
+      name: member.user.name,
+      email: member.user.email,
+      role: member.role,
+    })),
+    waypoints: trip.waypoints.map((wp) => ({
+      id: wp.id,
+      name: wp.name,
+      notes: wp.notes,
+      visitMinutes: wp.visitMinutes,
+      openMinutes: wp.openMinutes,
+      closeMinutes: wp.closeMinutes,
+    })),
+    dayPlans: trip.dayPlans.map((day) => ({
+      day: day.day,
+      estimatedTravelMinutes: day.estimatedTravelMinutes,
+      // Use index-based mapping as primary source since saved waypointIds can
+      // become stale after waypoint recreation on trip updates.
+      waypointIds: (() => {
+        const idsFromIndexes = day.waypointIndexes
+          .map((idx) => trip.waypoints[idx]?.id)
+          .filter((id): id is string => Boolean(id && waypointById.has(id)));
+        if (idsFromIndexes.length > 0) return idsFromIndexes;
+        return day.waypointIds.filter((id) => waypointById.has(id));
+      })(),
+    })),
   });
-
-  const pdfBuffer = buildSimplePdf(`${trip.name} - Itinerary`, lines);
   return new Response(pdfBuffer, {
     headers: {
       "Content-Type": "application/pdf",

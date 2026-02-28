@@ -22,6 +22,11 @@ interface InviteItem {
   status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
 }
 
+interface InviteCreateResponse extends InviteItem {
+  emailDelivered?: boolean;
+  emailWarning?: string | null;
+}
+
 interface TripMembersPanelProps {
   tripId: string;
   canManage: boolean;
@@ -34,6 +39,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<MemberRole>("EDITOR");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -63,6 +69,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
   const inviteMember = async () => {
     if (!canManage || !email.trim()) return;
     setError("");
+    setNotice("");
     const res = await fetch(`/api/trips/${tripId}/invites`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -72,6 +79,12 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
       const data = await res.json().catch(() => null);
       setError(data?.error || "Failed to send invite");
       return;
+    }
+    const data = (await res.json()) as InviteCreateResponse;
+    if (data.emailDelivered) {
+      setNotice("Invite sent by email.");
+    } else {
+      setNotice("Invite created. Email delivery unavailable; share the invite link.");
     }
     setEmail("");
     await load();
@@ -153,7 +166,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
       {canManage && (
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Invite Member
+            Invite Collaborator
           </p>
           <Input
             value={email}
@@ -172,10 +185,11 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
             </select>
             <Button size="sm" className="gap-1.5" onClick={inviteMember}>
               <UserPlus className="h-3.5 w-3.5" />
-              Invite
+              Send invite
             </Button>
           </div>
           {error && <p className="text-[11px] text-red-500">{error}</p>}
+          {notice && <p className="text-[11px] text-emerald-600">{notice}</p>}
         </div>
       )}
 
@@ -219,7 +233,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
               </div>
             ))
         )}
-        {copiedInviteId && <p className="text-[11px] text-green-600">Invite link copied.</p>}
+        {copiedInviteId && <p className="text-[11px] text-green-600">Invite link copied to clipboard.</p>}
       </div>
     </div>
   );

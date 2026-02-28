@@ -16,7 +16,7 @@ export async function GET(
   const { tripId } = await params;
   const access = await getTripAccess(tripId, session.user.id);
   if (!access || !canViewTrip(access.role)) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
   const trip = await prisma.trip.findFirst({
     where: { id: tripId },
@@ -35,7 +35,7 @@ export async function GET(
   });
 
   if (!trip) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
 
   return NextResponse.json({
@@ -64,11 +64,11 @@ export async function PUT(
   const existing = await prisma.trip.findUnique({ where: { id: tripId } });
 
   if (!existing) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+    return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
   if (existing.status === "FINALIZED") {
     return NextResponse.json(
-      { error: "Trip is finalized. Unfinalize before editing." },
+      { error: "Itinerary is finalized. Reopen it before editing." },
       { status: 400 }
     );
   }
@@ -175,7 +175,7 @@ export async function PUT(
     return NextResponse.json(trip);
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to save trip";
+      error instanceof Error ? error.message : "Failed to save itinerary";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

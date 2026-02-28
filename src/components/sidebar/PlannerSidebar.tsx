@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { useMapStore } from "@/stores/mapStore";
 import { useTripStore, WaypointData } from "@/stores/tripStore";
 import { getDirections, optimizeWaypoints } from "@/lib/api/mapbox";
@@ -46,6 +46,9 @@ import {
   Users,
   FileDown,
   Globe,
+  History,
+  Compass,
+  X,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 
@@ -67,6 +70,46 @@ interface OptimizationSnapshot {
 
 type TripRole = "OWNER" | "EDITOR" | "VIEWER";
 type TripStatus = "DRAFT" | "FINALIZED";
+type LifecycleStage = "DRAFT" | "PLANNING" | "FINALIZED" | "SHARED";
+type EventPayload = Record<string, unknown>;
+
+interface TripTimelineEvent {
+  id: string;
+  type: string;
+  payload?: EventPayload;
+  actorId?: string;
+  createdAt: string;
+}
+
+interface StarterTemplate {
+  id: string;
+  name: string;
+  description: string;
+  waypoints: Array<{ name: string; lat: number; lng: number }>;
+}
+
+const STARTER_TEMPLATES: StarterTemplate[] = [
+  {
+    id: "city-weekend",
+    name: "Weekend in Tokyo",
+    description: "A curated city flow with highlights, food, and neighborhoods.",
+    waypoints: [
+      { name: "Senso-ji Temple, Tokyo", lat: 35.7148, lng: 139.7967 },
+      { name: "Shibuya Crossing, Tokyo", lat: 35.6595, lng: 139.7005 },
+      { name: "Meiji Shrine, Tokyo", lat: 35.6764, lng: 139.6993 },
+    ],
+  },
+  {
+    id: "europe-loop",
+    name: "Europe Multi-city",
+    description: "A polished multi-city loop for a longer itinerary.",
+    waypoints: [
+      { name: "Eiffel Tower, Paris", lat: 48.8584, lng: 2.2945 },
+      { name: "Colosseum, Rome", lat: 41.8902, lng: 12.4922 },
+      { name: "Sagrada Familia, Barcelona", lat: 41.4036, lng: 2.1744 },
+    ],
+  },
+];
 
 export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const {
@@ -80,6 +123,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setDefaultVisitMinutes,
   } = useMapStore();
   const {
+    tripId: activeTripId,
     waypoints,
     tripName,
     selectedPOI,
@@ -96,6 +140,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(tripName);
   const [optimizing, setOptimizing] = useState(false);
@@ -118,8 +164,14 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     useState<OptimizationSnapshot | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<TripRole>("OWNER");
   const [tripStatus, setTripStatus] = useState<TripStatus>("DRAFT");
+  const [isPublic, setIsPublic] = useState(false);
   const [memberCount, setMemberCount] = useState(1);
   const [membersOpen, setMembersOpen] = useState(false);
+  const [advancedActionsOpen, setAdvancedActionsOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityEvents, setActivityEvents] = useState<TripTimelineEvent[]>([]);
+  const [showOnboardingCard, setShowOnboardingCard] = useState(false);
   const [liveCollabToast, setLiveCollabToast] = useState("");
   const lastEventAtRef = useRef(0);
 
@@ -127,37 +179,159 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     (currentUserRole === "OWNER" || currentUserRole === "EDITOR") &&
     tripStatus === "DRAFT";
   const canManageTrip = currentUserRole === "OWNER";
+  const effectiveTripId = tripId ?? activeTripId;
+  const lifecycleStage: LifecycleStage = useMemo(() => {
+    if (tripStatus === "FINALIZED" && isPublic) return "SHARED";
+    if (tripStatus === "FINALIZED") return "FINALIZED";
+    if (showDayPlanner || optimizeDays.length > 0) return "PLANNING";
+    return "DRAFT";
+  }, [tripStatus, isPublic, showDayPlanner, optimizeDays.length]);
 
-  const getCollabToastMessage = (eventType?: string, actorName?: string) => {
+  const lifecycleLabelByStage: Record<LifecycleStage, string> = {
+    DRAFT: "Draft",
+    PLANNING: "Planning",
+    FINALIZED: "Finalized",
+    SHARED: "Shared",
+  };
+
+  const lifecycleHintByStage: Record<LifecycleStage, string> = {
+    DRAFT: "Add key stops and save your first draft.",
+    PLANNING: "Review day-by-day details, then finalize your itinerary.",
+    FINALIZED: "Your itinerary is ready to publish and share.",
+    SHARED: "Your shared itinerary is live for collaborators and viewers.",
+  };
+
+  const getCollabToastMessage = (
+    eventType?: string,
+    payload?: EventPayload,
+    actorName?: string
+  ) => {
     const actor = actorName || "Someone";
     switch (eventType) {
       case "trip.updated":
-        return `${actor} edited this trip.`;
+        return `${actor} updated itinerary details.`;
       case "trip.created":
-        return `${actor} created this trip.`;
+        return `${actor} created this itinerary.`;
       case "trip.finalized":
-        return `${actor} finalized the trip.`;
+        return `${actor} finalized the itinerary.`;
       case "trip.unfinalized":
-        return `${actor} reopened the trip as draft.`;
+        return `${actor} reopened the itinerary as draft.`;
       case "trip.published":
-        return `${actor} published the trip.`;
+        return `${actor} published the itinerary.`;
       case "trip.unpublished":
-        return `${actor} unpublished the trip.`;
+        return `${actor} unpublished the itinerary.`;
       case "trip.member.upserted":
-        return `${actor} updated trip members.`;
+        return `${actor} updated ${(payload?.email as string) || "a member"} access.`;
       case "trip.member.removed":
         return `${actor} removed a member.`;
       case "trip.invite.created":
-        return `${actor} invited a member.`;
+        return `${actor} invited ${(payload?.email as string) || "a member"}.`;
       case "trip.invite.revoked":
         return `${actor} revoked an invite.`;
       case "trip.invite.accepted":
         return `${actor} accepted an invite.`;
       default:
         return actorName
-          ? `Trip changed by ${actorName}.`
-          : "Trip changed by a collaborator.";
+          ? `Itinerary updated by ${actorName}.`
+          : "Itinerary updated by a collaborator.";
     }
+  };
+
+  const formatEventMessage = (evt: TripTimelineEvent) => {
+    const payload = evt.payload || {};
+    const actorName = (payload.actorName as string) || "Someone";
+    switch (evt.type) {
+      case "trip.updated":
+        return `${actorName} updated the itinerary (${Number(payload.waypointCount || 0)} stops, ${Number(
+          payload.dayCount || 0
+        )} days).`;
+      case "trip.created":
+        return `${actorName} created this itinerary.`;
+      case "trip.finalized":
+        return `${actorName} finalized the itinerary.`;
+      case "trip.unfinalized":
+        return `${actorName} moved the itinerary back to draft.`;
+      case "trip.published":
+        return `${actorName} published this itinerary for sharing.`;
+      case "trip.unpublished":
+        return `${actorName} unpublished this itinerary.`;
+      case "trip.invite.created":
+        return `${actorName} invited ${(payload.email as string) || "a collaborator"} as ${
+          (payload.role as string) || "member"
+        }.`;
+      case "trip.invite.revoked":
+        return `${actorName} revoked an invite.`;
+      case "trip.invite.accepted":
+        return `${actorName} accepted an invite.`;
+      case "trip.member.upserted":
+        return `${actorName} changed ${(payload.email as string) || "a member"} role to ${
+          (payload.role as string) || "member"
+        }.`;
+      case "trip.member.removed":
+        return `${actorName} removed a member.`;
+      default:
+        return `${actorName} made an update.`;
+    }
+  };
+
+  const formatEventTime = (isoTime: string) => {
+    const date = new Date(isoTime);
+    const deltaMs = Date.now() - date.getTime();
+    const deltaMinutes = Math.floor(deltaMs / 60000);
+    if (deltaMinutes < 1) return "just now";
+    if (deltaMinutes < 60) return `${deltaMinutes}m ago`;
+    const deltaHours = Math.floor(deltaMinutes / 60);
+    if (deltaHours < 24) return `${deltaHours}h ago`;
+    const deltaDays = Math.floor(deltaHours / 24);
+    if (deltaDays < 7) return `${deltaDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  const loadActivityHistory = useCallback(async () => {
+    if (!effectiveTripId) return;
+    setActivityLoading(true);
+    try {
+      const res = await fetch(`/api/trips/${effectiveTripId}/events?mode=history&limit=40`);
+      if (!res.ok) return;
+      const data = (await res.json()) as TripTimelineEvent[];
+      setActivityEvents(Array.isArray(data) ? data : []);
+    } catch {
+      // Best-effort UI; ignore errors.
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [effectiveTripId]);
+
+  const dismissOnboarding = () => {
+    setShowOnboardingCard(false);
+    try {
+      window.localStorage.setItem("pty_onboarding_seen", "1");
+    } catch {
+      // Ignore storage issues.
+    }
+  };
+
+  const applyStarterTemplate = (template: StarterTemplate) => {
+    if (!canEditTrip) return;
+    const now = Date.now();
+    reorderWaypoints(
+      template.waypoints.map((wp, index) => ({
+        id: `starter-${template.id}-${now}-${index}`,
+        name: wp.name,
+        lat: wp.lat,
+        lng: wp.lng,
+        order: index,
+        isLocked: false,
+        visitMinutes: defaultVisitMinutes,
+        openMinutes: 0,
+        closeMinutes: 23 * 60 + 59,
+      }))
+    );
+    setTripName(template.name);
+    setShowDayPlanner(false);
+    setOptimizeDays([]);
+    setOptimizeSummary("");
+    dismissOnboarding();
   };
 
   const normalizeDayPlans = useCallback(
@@ -326,6 +500,19 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     if (mq.matches) setSidebarOpen(false);
   }, [setSidebarOpen]);
 
+  useEffect(() => {
+    if (tripId || waypoints.length > 0) {
+      setShowOnboardingCard(false);
+      return;
+    }
+    try {
+      const alreadySeen = window.localStorage.getItem("pty_onboarding_seen") === "1";
+      setShowOnboardingCard(!alreadySeen);
+    } catch {
+      setShowOnboardingCard(true);
+    }
+  }, [tripId, waypoints.length]);
+
   // New trip: reset store. Existing trip: load data
   useEffect(() => {
     if (!tripId) {
@@ -366,6 +553,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           setOptimizationConflicts([]);
           setCurrentUserRole((data.currentUserRole as TripRole) || "OWNER");
           setTripStatus((data.status as TripStatus) || "DRAFT");
+          setIsPublic(Boolean(data.isPublic));
           setMemberCount(
             Array.isArray(data.members)
               ? data.members.length
@@ -544,15 +732,16 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         setTripId(data.id);
         if (data.currentUserRole) setCurrentUserRole(data.currentUserRole as TripRole);
         if (data.status) setTripStatus(data.status as TripStatus);
+        setIsPublic(Boolean(data.isPublic));
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
       } else {
         const errorData = await res.json().catch(() => null);
-        setSaveError(errorData?.error || "Failed to save trip");
+        setSaveError(errorData?.error || "Failed to save itinerary");
         setTimeout(() => setSaveError(""), 4000);
       }
     } catch {
-      setSaveError("Failed to save trip");
+      setSaveError("Failed to save itinerary");
       setTimeout(() => setSaveError(""), 4000);
     } finally {
       setSaving(false);
@@ -562,16 +751,49 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const handleFinalize = async () => {
     const currentTripId = useTripStore.getState().tripId;
     if (!currentTripId || !canManageTrip) return;
-    const res = await fetch(`/api/trips/${currentTripId}/finalize`, { method: "POST" });
-    if (res.ok) {
+    setActionError("");
+    setActionNotice("");
+    try {
+      const res = await fetch(`/api/trips/${currentTripId}/finalize`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setActionError(data?.error || "Failed to finalize itinerary");
+        return;
+      }
       setTripStatus("FINALIZED");
+      setActionNotice("Itinerary finalized.");
+      window.setTimeout(() => setActionNotice(""), 2500);
+    } catch {
+      setActionError("Failed to finalize itinerary");
     }
   };
 
   const handlePublish = async () => {
     const currentTripId = useTripStore.getState().tripId;
     if (!currentTripId || !canManageTrip) return;
-    await fetch(`/api/trips/${currentTripId}/publish`, { method: "POST" });
+    setActionError("");
+    setActionNotice("");
+    try {
+      const res = await fetch(`/api/trips/${currentTripId}/publish`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(data?.error || "Failed to publish itinerary");
+        return;
+      }
+      setIsPublic(true);
+      const shareUrl = data?.shareUrl as string | undefined;
+      if (shareUrl && typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(shareUrl).catch(() => {});
+      }
+      setActionNotice(
+        shareUrl
+          ? "Itinerary published. Share link copied to clipboard."
+          : "Itinerary published."
+      );
+      window.setTimeout(() => setActionNotice(""), 3200);
+    } catch {
+      setActionError("Failed to publish itinerary");
+    }
   };
 
   const handleExportPdf = async () => {
@@ -699,38 +921,62 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   };
 
   useEffect(() => {
-    if (!tripId || !session?.user?.id) return;
+    if (!effectiveTripId || !session?.user?.id) return;
     const stream = new EventSource(
-      `/api/trips/${tripId}/events?since=${lastEventAtRef.current || 0}`
+      `/api/trips/${effectiveTripId}/events?since=${lastEventAtRef.current || 0}`
     );
     const handleTripEvent = (event: Event) => {
       const messageEvent = event as MessageEvent<string>;
-      let actorId: string | undefined;
-      let type: string | undefined;
-      let actorName: string | undefined;
+      let parsed:
+        | {
+            id?: string;
+            actorId?: string;
+            type?: string;
+            actorName?: string;
+            payload?: EventPayload & { actorName?: string };
+            createdAt?: string;
+          }
+        | undefined;
       try {
-        const parsed = JSON.parse(messageEvent.data) as {
+        parsed = JSON.parse(messageEvent.data) as {
+          id?: string;
           actorId?: string;
           type?: string;
           actorName?: string;
-          payload?: { actorName?: string };
+          payload?: EventPayload & { actorName?: string };
+          createdAt?: string;
         };
-        actorId = parsed.actorId;
-        type = parsed.type;
-        actorName = parsed.payload?.actorName || parsed.actorName;
       } catch {
         // Ignore parse errors; sync fetch still runs below.
       }
+      const actorId = parsed?.actorId;
+      const actorName = parsed?.payload?.actorName || parsed?.actorName;
       if (actorId && actorId !== session.user.id) {
-        setLiveCollabToast(getCollabToastMessage(type, actorName));
+        setLiveCollabToast(getCollabToastMessage(parsed?.type, parsed?.payload, actorName));
         window.setTimeout(() => setLiveCollabToast(""), 2200);
       }
+      if (parsed?.id && parsed.type && parsed.createdAt) {
+        setActivityEvents((prev) => {
+          const next = [
+            {
+              id: parsed.id,
+              type: parsed.type,
+              payload: parsed.payload || {},
+              actorId: parsed.actorId,
+              createdAt: parsed.createdAt,
+            },
+            ...prev.filter((evt) => evt.id !== parsed?.id),
+          ];
+          return next.slice(0, 40);
+        });
+      }
       lastEventAtRef.current = Date.now();
-      fetch(`/api/trips/${tripId}`)
+      fetch(`/api/trips/${effectiveTripId}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!data) return;
           if (data.status) setTripStatus(data.status as TripStatus);
+          setIsPublic(Boolean(data.isPublic));
           if (data.currentUserRole) setCurrentUserRole(data.currentUserRole as TripRole);
           if (Array.isArray(data.members)) setMemberCount(data.members.length);
         })
@@ -741,7 +987,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       stream.removeEventListener("trip_event", handleTripEvent);
       stream.close();
     };
-  }, [tripId, session?.user?.id]);
+  }, [effectiveTripId, session?.user?.id]);
+
+  useEffect(() => {
+    if (!effectiveTripId || !session?.user?.id) return;
+    void loadActivityHistory();
+  }, [effectiveTripId, session?.user?.id, loadActivityHistory]);
 
   if (!sidebarOpen) {
     return (
@@ -840,79 +1091,155 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         {session?.user && (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Badge variant={tripStatus === "FINALIZED" ? "default" : "secondary"}>
-                {tripStatus === "FINALIZED" ? "Finalized" : "Draft"}
-              </Badge>
-              <Badge variant="outline">
-                {currentUserRole}
-              </Badge>
-              <Badge variant="outline" className="gap-1">
-                <Users className="h-3 w-3" />
-                {memberCount}
-              </Badge>
+                <Badge variant={tripStatus === "FINALIZED" ? "default" : "secondary"}>
+                  {lifecycleLabelByStage[lifecycleStage]}
+                </Badge>
+                <Badge variant="outline">{currentUserRole}</Badge>
+                <Badge variant="outline" className="gap-1">
+                  <Users className="h-3 w-3" />
+                  {memberCount}
+                </Badge>
             </div>
+              <p className="text-[11px] text-muted-foreground">
+                {lifecycleHintByStage[lifecycleStage]}
+              </p>
             <div className="flex items-center gap-2">
-            <Button
-              onClick={handleSave}
-              disabled={saving || waypoints.length === 0 || !canEditTrip}
-              size="sm"
-              className="w-full gap-1.5 min-h-9 touch-manipulation"
-              variant={saved ? "outline" : "default"}
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : saved ? (
-                <Check className="h-4 w-4 text-green-600" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {saving ? "Saving..." : saved ? "Saved!" : "Save Trip"}
-            </Button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setMembersOpen(true)}
-                disabled={!tripId}
-                className="gap-1.5"
-              >
-                <Users className="h-4 w-4" />
-                Members
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleExportPdf}
-                disabled={!tripId || tripStatus !== "FINALIZED"}
-                className="gap-1.5"
-              >
-                <FileDown className="h-4 w-4" />
-                Export PDF
-              </Button>
-            </div>
-            {canManageTrip && (
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleFinalize}
-                  disabled={!tripId || tripStatus === "FINALIZED"}
-                >
-                  Finalize Plan
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handlePublish}
-                  disabled={!tripId || tripStatus !== "FINALIZED"}
-                  className="gap-1.5"
-                >
-                  <Globe className="h-4 w-4" />
-                  Publish
-                </Button>
+                {!effectiveTripId ? (
+                  <Button
+                    onClick={handleSave}
+                    disabled={saving || waypoints.length === 0 || !canEditTrip}
+                    size="sm"
+                    className="w-full gap-1.5 min-h-9 touch-manipulation"
+                    variant={saved ? "outline" : "default"}
+                  >
+                    {saving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : saved ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {saving ? "Saving..." : saved ? "Saved!" : "Save itinerary"}
+                  </Button>
+                ) : canManageTrip && lifecycleStage === "PLANNING" ? (
+                  <Button
+                    size="sm"
+                    className="w-full min-h-9 touch-manipulation"
+                    onClick={handleFinalize}
+                    disabled={!effectiveTripId || tripStatus === "FINALIZED"}
+                  >
+                    Finalize itinerary
+                  </Button>
+                ) : canManageTrip && lifecycleStage === "FINALIZED" ? (
+                  <Button
+                    size="sm"
+                    className="w-full gap-1.5 min-h-9 touch-manipulation"
+                    onClick={handlePublish}
+                    disabled={!effectiveTripId || tripStatus !== "FINALIZED"}
+                  >
+                    <Globe className="h-4 w-4" />
+                    Publish itinerary
+                  </Button>
+                ) : lifecycleStage === "SHARED" ? (
+                  <Button
+                    size="sm"
+                    className="w-full gap-1.5 min-h-9 touch-manipulation"
+                    onClick={handleExportPdf}
+                    disabled={!effectiveTripId}
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Export itinerary PDF
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleSave}
+                    disabled={saving || waypoints.length === 0 || !canEditTrip}
+                    size="sm"
+                    className="w-full gap-1.5 min-h-9 touch-manipulation"
+                    variant={saved ? "outline" : "default"}
+                  >
+                    {saving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : saved ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {saving ? "Saving..." : saved ? "Saved!" : "Save itinerary"}
+                  </Button>
+                )}
               </div>
-            )}
+              <button
+                type="button"
+                className="w-full flex items-center justify-between rounded-md border px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/40"
+                onClick={() => setAdvancedActionsOpen((prev) => !prev)}
+              >
+                More actions
+                {advancedActionsOpen ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+              {advancedActionsOpen && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setActivityOpen(true);
+                      void loadActivityHistory();
+                    }}
+                    disabled={!effectiveTripId}
+                    className="gap-1.5"
+                  >
+                    <History className="h-4 w-4" />
+                    Activity
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMembersOpen(true)}
+                    disabled={!effectiveTripId}
+                    className="gap-1.5"
+                  >
+                    <Users className="h-4 w-4" />
+                    Members
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleExportPdf}
+                    disabled={!effectiveTripId || tripStatus !== "FINALIZED"}
+                    className="gap-1.5"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Export itinerary PDF
+                  </Button>
+                  {canManageTrip && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleFinalize}
+                        disabled={!effectiveTripId || tripStatus === "FINALIZED"}
+                      >
+                        Finalize itinerary
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handlePublish}
+                        disabled={!effectiveTripId || tripStatus !== "FINALIZED"}
+                        className="gap-1.5"
+                      >
+                        <Globe className="h-4 w-4" />
+                        Publish itinerary
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
           </div>
         )}
         {showDayPlanner && optimizationHistory.length > 0 && (
@@ -924,7 +1251,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               className="gap-1.5 min-h-8"
             >
               <Undo2 className="h-4 w-4" />
-              Undo last optimize
+              Undo last optimization
             </Button>
             <Button
               onClick={handleResetAllOptimizations}
@@ -941,6 +1268,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         {saveError && (
           <p className="text-xs text-red-500">{saveError}</p>
         )}
+        {actionError && <p className="text-xs text-red-500">{actionError}</p>}
+        {actionNotice && <p className="text-xs text-emerald-600">{actionNotice}</p>}
         {optimizeSummary && (
           <p className="text-xs text-green-600">{optimizeSummary}</p>
         )}
@@ -965,12 +1294,62 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       {/* Content - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-4 space-y-6">
+          {showOnboardingCard && (
+            <section className="rounded-md border border-blue-200 bg-blue-50/70 p-3 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
+                    Quick Start
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Start from a polished template so your first itinerary is never blank.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  onClick={dismissOnboarding}
+                  title="Dismiss onboarding"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {STARTER_TEMPLATES.map((template) => (
+                  <button
+                    key={template.id}
+                    className="w-full rounded-md border bg-white px-3 py-2 text-left hover:bg-blue-50 disabled:opacity-60"
+                    onClick={() => applyStarterTemplate(template)}
+                    disabled={!canEditTrip}
+                  >
+                    <p className="text-sm font-medium flex items-center gap-1.5">
+                      <Compass className="h-3.5 w-3.5 text-blue-600" />
+                      {template.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">{template.description}</p>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Or search above, add your first stop, and save your draft.
+              </p>
+            </section>
+          )}
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
               <MapPin className="h-3.5 w-3.5" />
               Route
             </h3>
             <WaypointList disabled={!canEditTrip} />
+            {waypoints.length === 0 && (
+              <div className="rounded-md border border-dashed p-3 mt-3">
+                <p className="text-xs font-medium">No stops yet</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Add at least 3 stops to unlock day-wise auto planning.
+                </p>
+              </div>
+            )}
             <Separator className="my-4" />
             <FilterPanel />
             {waypoints.length >= 3 && (
@@ -979,21 +1358,21 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                 <div className="rounded-md border bg-blue-50/60 p-3 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Day-wise Planning
+                      Day-by-Day Itinerary
                     </p>
                     {showDayPlanner && optimizeDays.length > 0 && (
                       <Badge
                         variant="secondary"
                         className="text-[10px] font-medium bg-emerald-100 text-emerald-700 border-emerald-200"
                       >
-                        Done planning · {optimizeDays.length} day
+                        Itinerary ready · {optimizeDays.length} day
                         {optimizeDays.length !== 1 ? "s" : ""}
                       </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Build your route first. Then generate a day-by-day plan like TripAdvisor
-                    using opening hours and nearest-stop sequencing.
+                    Build your route first, then generate a day-by-day itinerary using opening
+                    hours and nearest-stop sequencing.
                   </p>
                   <Button
                     onClick={async () => {
@@ -1011,7 +1390,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                     ) : (
                       <Sparkles className="h-4 w-4" />
                     )}
-                    {showDayPlanner ? "Re-generate Day Plan" : "Plan Route Day-wise"}
+                    {showDayPlanner
+                      ? "Regenerate Day-by-Day Itinerary"
+                      : "Generate Day-by-Day Itinerary"}
                   </Button>
                 </div>
               </>
@@ -1032,10 +1413,10 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <CalendarDays className="h-4 w-4" />
-              Day-wise Planner
+              Day-by-Day Planner
             </SheetTitle>
             <SheetDescription>
-              Adjust day constraints and generate itinerary grouped by opening hours
+              Adjust planning constraints and generate an itinerary by opening hours
               and nearest stops.
             </SheetDescription>
           </SheetHeader>
@@ -1095,7 +1476,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               ) : (
                 <Sparkles className="h-4 w-4" />
               )}
-              Re-generate Day Plan
+              Regenerate Day-by-Day Itinerary
             </Button>
             {showDayPlanner && optimizeDays.length > 0 ? (
               <div className="space-y-2">
@@ -1229,7 +1610,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                No day plan generated yet. Click re-generate to build one.
+                No itinerary generated yet. Regenerate to create one.
               </p>
             )}
           </div>
@@ -1247,12 +1628,45 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             </SheetDescription>
           </SheetHeader>
           <div className="px-4 pb-4">
-            {tripId ? (
-              <TripMembersPanel tripId={tripId} canManage={canManageTrip} />
+            {effectiveTripId ? (
+              <TripMembersPanel tripId={effectiveTripId} canManage={canManageTrip} />
             ) : (
               <p className="text-xs text-muted-foreground">
-                Save the trip first to invite collaborators.
+                Save the itinerary first to invite collaborators.
               </p>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+      <Sheet open={activityOpen} onOpenChange={setActivityOpen}>
+        <SheetContent side="right" className="sm:max-w-md w-[90vw]">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <History className="h-4 w-4" />
+              Activity Timeline
+            </SheetTitle>
+            <SheetDescription>
+              Recent collaboration updates with clear attribution.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="px-4 pb-4 pt-2">
+            {activityLoading ? (
+              <p className="text-xs text-muted-foreground">Loading activity...</p>
+            ) : activityEvents.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No activity yet. Changes will appear here in real time.
+              </p>
+            ) : (
+              <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+                {activityEvents.map((evt) => (
+                  <div key={evt.id} className="rounded-md border p-2">
+                    <p className="text-xs text-foreground">{formatEventMessage(evt)}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      {formatEventTime(evt.createdAt)}
+                    </p>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </SheetContent>
