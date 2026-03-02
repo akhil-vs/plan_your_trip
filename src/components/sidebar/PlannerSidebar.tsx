@@ -205,7 +205,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   const canEditTrip =
     (currentUserRole === "OWNER" || currentUserRole === "EDITOR") &&
-    tripStatus === "DRAFT";
+    (tripStatus === "DRAFT" || isPublic);
   const canManageTrip = currentUserRole === "OWNER";
   const collaborationEnabled = canUseCollaboration(userPlan);
   const timelineEnabled = canUseActivityTimeline(userPlan);
@@ -1407,6 +1407,19 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   >
                     <FileDown className="h-4 w-4" />
                     Export itinerary PDF
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      setDayPlannerOpen(true);
+                      await handleOptimize();
+                    }}
+                    disabled={optimizing || waypoints.length < 3 || !canEditTrip}
+                    className="gap-1.5"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Regenerate day plan
                   </Button>
                   {canManageTrip && (
                     <>

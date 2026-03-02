@@ -66,7 +66,7 @@ export async function PUT(
   if (!existing) {
     return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
-  if (existing.status === "FINALIZED") {
+  if (existing.status === "FINALIZED" && !existing.isPublic) {
     return NextResponse.json(
       { error: "Itinerary is finalized. Reopen it before editing." },
       { status: 400 }

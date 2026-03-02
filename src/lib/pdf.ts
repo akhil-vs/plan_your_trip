@@ -63,6 +63,7 @@ export function buildSimplePdf(title: string, lines: string[]) {
       "50 790 Td",
       `(${safeTitle}) Tj`,
       "/F1 10 Tf",
+      "12 TL",
       "0 -24 Td",
       ...pageLines.map((line) => `(${line}) Tj T*`),
       "ET",
