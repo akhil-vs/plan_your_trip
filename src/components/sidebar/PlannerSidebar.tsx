@@ -507,6 +507,40 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     return `${hrs}h ${mins}m`;
   };
 
+  const estimateLegMinutesForDay = (a: WaypointData, b: WaypointData) => {
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const earthRadiusKm = 6371;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLng = Math.sin(dLng / 2);
+    const h =
+      sinDLat * sinDLat +
+      Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+    const distanceKm = 2 * earthRadiusKm * Math.asin(Math.sqrt(h));
+    const speedKmPerHour = 60; // Keep manual recalc aligned with default driving mode
+    return Math.max(1, Math.round((distanceKm / speedKmPerHour) * 60));
+  };
+
+  const recalculateDayPlanTravel = (
+    plans: DayPlan[],
+    allWaypoints: WaypointData[]
+  ): DayPlan[] => {
+    const waypointById = new Map(allWaypoints.map((wp) => [wp.id, wp]));
+    return plans.map((plan) => {
+      let estimatedTravelMinutes = 0;
+      for (let i = 0; i < plan.waypointIds.length - 1; i += 1) {
+        const from = waypointById.get(plan.waypointIds[i]);
+        const to = waypointById.get(plan.waypointIds[i + 1]);
+        if (!from || !to) continue;
+        estimatedTravelMinutes += estimateLegMinutesForDay(from, to);
+      }
+      return { ...plan, estimatedTravelMinutes };
+    });
+  };
+
   const getDayVisitMinutes = (dayPlan: DayPlan) =>
     dayPlan.waypointIds.reduce((total, id) => {
       const wp = waypoints.find((item) => item.id === id);
@@ -542,7 +576,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setOptimizeSummary(snapshot.summary);
   };
   useEffect(() => {
-    setOptimizeDays((prev) => normalizeDayPlans(waypoints, prev));
+    setOptimizeDays((prev) =>
+      recalculateDayPlanTravel(normalizeDayPlans(waypoints, prev), waypoints)
+    );
   }, [waypoints, normalizeDayPlans]);
 
   useEffect(() => {
@@ -1046,7 +1082,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   };
 
   const updateDayPlans = (updater: (prev: DayPlan[]) => DayPlan[]) => {
-    setOptimizeDays((prev) => normalizeDayPlans(waypoints, updater(prev)));
+    setOptimizeDays((prev) =>
+      recalculateDayPlanTravel(
+        normalizeDayPlans(waypoints, updater(prev)),
+        waypoints
+      )
+    );
   };
 
   const moveWaypointWithinDay = (
@@ -1751,7 +1792,19 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                               className="rounded border bg-muted/30 px-2 py-1.5 space-y-1.5"
                             >
                               <div className="flex items-center gap-2">
-                                <p className="text-xs flex-1 truncate">{wp.name}</p>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs truncate">{wp.name}</p>
+                                  {wp.isTransitSplit && (
+                                    <p className="text-[10px] text-muted-foreground">
+                                      {(() => {
+                                        const match = wp.id.match(/-(\d+)$/);
+                                        return match
+                                          ? `En-route stop ${match[1]}`
+                                          : "En-route stop";
+                                      })()}
+                                    </p>
+                                  )}
+                                </div>
                                 {wp.isTransitSplit && (
                                   <Badge variant="outline" className="text-[10px]">
                                     Transit

@@ -220,6 +220,43 @@ function interpolateWaypoint(
   };
 }
 
+async function reverseGeocodeLocationName(
+  lat: number,
+  lng: number,
+  cache: Map<string, string | null>
+) {
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  if (cache.has(key)) return cache.get(key) || null;
+
+  const accessToken =
+    process.env.MAPBOX_ACCESS_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  if (!accessToken) {
+    cache.set(key, null);
+    return null;
+  }
+
+  try {
+    const endpoint = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${encodeURIComponent(
+      accessToken
+    )}&types=place,locality,neighborhood,address&limit=1`;
+    const res = await fetch(endpoint, { cache: "no-store" });
+    if (!res.ok) {
+      cache.set(key, null);
+      return null;
+    }
+    const data = (await res.json()) as {
+      features?: Array<{ place_name?: string; text?: string }>;
+    };
+    const feature = data.features?.[0];
+    const label = feature?.place_name || feature?.text || null;
+    cache.set(key, label);
+    return label;
+  } catch {
+    cache.set(key, null);
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   const advancedOptimizationEnabled = canUseAdvancedOptimization(
@@ -300,6 +337,7 @@ export async function POST(req: NextRequest) {
   // virtual waypoints so itinerary is naturally split across days.
   const splitAwareRoute: OptimizerWaypoint[] = [];
   const autoSplitConflicts: OptimizeConflict[] = [];
+  const reverseGeoCache = new Map<string, string | null>();
   if (autoSplitLongTransfers) {
     for (let i = 0; i < refined.length; i += 1) {
       const current = refined[i];
@@ -313,9 +351,14 @@ export async function POST(req: NextRequest) {
       for (let segment = 1; segment < segments; segment += 1) {
         const ratio = segment / segments;
         const point = interpolateWaypoint(current, next, ratio);
+        const realLocationName = await reverseGeocodeLocationName(
+          point.lat,
+          point.lng,
+          reverseGeoCache
+        );
         splitAwareRoute.push({
           id: `transit-${current.id || i}-${next.id || i + 1}-${segment}`,
-          name: `En-route stop ${segment}/${segments - 1}`,
+          name: realLocationName || `Between ${current.name} and ${next.name}`,
           lat: point.lat,
           lng: point.lng,
           isTransitSplit: true,
