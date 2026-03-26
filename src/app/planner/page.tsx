@@ -20,7 +20,7 @@ const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
 export default function PlannerPage() {
   return (
-    <div className="flex h-full min-h-0 w-full">
+    <div className="flex h-full min-h-0 w-full max-w-full overflow-hidden">
       <PlannerSidebar />
       <div className="flex-1 relative overflow-visible min-w-0 min-h-0">
         <MapView mapboxToken={mapboxToken} />

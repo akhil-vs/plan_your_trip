@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { isAdminEmail } from "@/lib/admin";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -34,7 +35,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!isValid) return null;
 
-        return { id: user.id, name: user.name, email: user.email, plan: user.plan };
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          plan: user.plan,
+          isAdmin: isAdminEmail(user.email),
+        };
       },
     }),
   ],
@@ -47,6 +54,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user) {
         token.id = user.id;
         token.plan = (user as { plan?: "FREE" | "PRO" | "TEAM" }).plan || "FREE";
+        token.isAdmin = Boolean((user as { isAdmin?: boolean }).isAdmin);
       }
       return token;
     },
@@ -54,6 +62,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (session.user) {
         session.user.id = token.id as string;
         session.user.plan = (token.plan as "FREE" | "PRO" | "TEAM" | undefined) || "FREE";
+        session.user.isAdmin = Boolean(token.isAdmin);
       }
       return session;
     },

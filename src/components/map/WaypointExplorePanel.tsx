@@ -8,22 +8,22 @@ import { fetchPlaces } from "@/lib/api/geoapify";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
 import {
   X,
   Landmark,
   Hotel,
   Utensils,
+  Car,
   Star,
   MapPin,
-  Loader2,
   ArrowLeft,
   Plus,
   ExternalLink,
-  ImageOff,
 } from "lucide-react";
 import { parseOpeningHoursWindow } from "@/lib/utils/openingHours";
 
-type ExploreTab = "menu" | "attractions" | "stays" | "food";
+type ExploreTab = "menu" | "attractions" | "stays" | "food" | "parking";
 
 interface PlaceDetail {
   id: string;
@@ -37,11 +37,62 @@ interface PlaceDetail {
   openingHours?: string;
 }
 
+function toRad(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function pointToSegmentDistanceMeters(
+  point: { lat: number; lng: number },
+  start: { lat: number; lng: number },
+  end: { lat: number; lng: number }
+): number {
+  const refLat = toRad((start.lat + end.lat + point.lat) / 3);
+  const meterX = (lng: number) => toRad(lng) * Math.cos(refLat) * 6371000;
+  const meterY = (lat: number) => toRad(lat) * 6371000;
+
+  const px = meterX(point.lng);
+  const py = meterY(point.lat);
+  const ax = meterX(start.lng);
+  const ay = meterY(start.lat);
+  const bx = meterX(end.lng);
+  const by = meterY(end.lat);
+
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const abLenSq = abx * abx + aby * aby;
+  if (abLenSq <= 0.0001) {
+    return Math.hypot(px - ax, py - ay);
+  }
+  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLenSq));
+  const nearestX = ax + t * abx;
+  const nearestY = ay + t * aby;
+  return Math.hypot(px - nearestX, py - nearestY);
+}
+
+function distanceToPolylineMeters(
+  point: { lat: number; lng: number },
+  polyline: Array<[number, number]>
+): number {
+  if (polyline.length < 2) return Infinity;
+  let minDist = Infinity;
+  for (let i = 1; i < polyline.length; i++) {
+    const start = { lng: polyline[i - 1][0], lat: polyline[i - 1][1] };
+    const end = { lng: polyline[i][0], lat: polyline[i][1] };
+    const d = pointToSegmentDistanceMeters(point, start, end);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
 export function WaypointExplorePanel() {
   const {
     activeWaypoint,
     setActiveWaypoint,
     searchRadius,
+    routeCorridorMeters,
+    setRouteCorridorMeters,
     routeExploreOpen,
     setRouteExploreOpen,
   } = useMapStore();
@@ -53,6 +104,7 @@ export function WaypointExplorePanel() {
     setAttractions,
     setStays,
     setFood,
+    setParking,
     setSelectedPOI: setGlobalSelectedPOI,
     setHoveredPOIId,
   } = useTripStore();
@@ -82,6 +134,7 @@ export function WaypointExplorePanel() {
     setAttractions([]);
     setStays([]);
     setFood([]);
+    setParking([]);
     setGlobalSelectedPOI(null);
     setHoveredPOIId(null);
   }, [
@@ -92,6 +145,7 @@ export function WaypointExplorePanel() {
     setGlobalSelectedPOI,
     setHoveredPOIId,
     setStays,
+    setParking,
   ]);
 
   const handleClose = () => {
@@ -105,6 +159,7 @@ export function WaypointExplorePanel() {
     setAttractions([]);
     setStays([]);
     setFood([]);
+    setParking([]);
     setGlobalSelectedPOI(null);
     setHoveredPOIId(null);
   };
@@ -120,6 +175,7 @@ export function WaypointExplorePanel() {
       setAttractions([]);
       setStays([]);
       setFood([]);
+      setParking([]);
       setHoveredPOIId(null);
     }
   };
@@ -131,27 +187,36 @@ export function WaypointExplorePanel() {
     setResults([]);
     try {
       const routeCoords = route?.geometry?.coordinates ?? [];
-      const sampleMax = 5;
-      const useRouteSampling = type === "attractions" && hasGeneratedRoute;
+      const routeLine: Array<[number, number]> = routeCoords
+        .map((coord) => [Number(coord[0]), Number(coord[1])] as [number, number])
+        .filter(
+          ([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat)
+        );
+      const sampleMax = 8;
+      const useRouteSampling = isRouteMode && hasGeneratedRoute;
       const samplePoints: Array<{ lat: number; lng: number }> = useRouteSampling
         ? (() => {
             const coords = routeCoords;
             if (!coords.length) return [];
-            const maxSamples = Math.min(sampleMax, coords.length);
-            const step = Math.max(1, Math.floor(coords.length / maxSamples));
-            const sample = coords
-              .filter((_, i) => i === 0 || (step > 0 && i % step === 0))
-              .slice(0, maxSamples)
-              .map((c) => ({ lng: c[0], lat: c[1] }));
-            const last = coords[coords.length - 1];
-            const lastPoint = { lng: last[0], lat: last[1] };
-            if (
-              lastPoint.lat !== sample[sample.length - 1]?.lat ||
-              lastPoint.lng !== sample[sample.length - 1]?.lng
-            ) {
-              sample.push(lastPoint);
+            const maxSamples = Math.min(sampleMax, coords.length, 12);
+            if (maxSamples <= 1) {
+              const only = coords[0];
+              return [{ lng: only[0], lat: only[1] }];
             }
-            return sample;
+
+            // Evenly sample across the full route polyline range [0, coords.length - 1].
+            const indexSet = new Set<number>();
+            for (let i = 0; i < maxSamples; i++) {
+              const t = i / (maxSamples - 1);
+              const idx = Math.round(t * (coords.length - 1));
+              indexSet.add(idx);
+            }
+
+            const sortedIndexes = Array.from(indexSet).sort((a, b) => a - b);
+            return sortedIndexes.map((idx) => {
+              const c = coords[idx];
+              return { lng: c[0], lat: c[1] };
+            });
           })()
         : wp
           ? [{ lat: wp.lat, lng: wp.lng }]
@@ -172,7 +237,12 @@ export function WaypointExplorePanel() {
             merged.push(poi);
           }
         } else {
-          const category = type === "stays" ? "accommodation" : "catering";
+          const category =
+            type === "stays"
+              ? "accommodation"
+              : type === "food"
+                ? "catering"
+                : "parking";
           const pois = await fetchPlaces(pt.lat, pt.lng, {
             radius: searchRadius,
             categories: category,
@@ -183,31 +253,63 @@ export function WaypointExplorePanel() {
             merged.push(poi);
           }
         }
-        // Keep UI responsive if we get a lot of results
-        if (merged.length >= 40) break;
       }
 
-      const finalResults = merged.slice(0, 40);
+      const corridorMeters = routeCorridorMeters;
+      const finalResults = useRouteSampling
+        ? (() => {
+            const scored = merged
+              .map((poi) => ({
+                poi,
+                distMeters: distanceToPolylineMeters(
+                  { lat: poi.lat, lng: poi.lng },
+                  routeLine
+                ),
+              }))
+              .sort((a, b) => a.distMeters - b.distMeters);
+
+            const withinCorridor = scored.filter(
+              (item) => item.distMeters <= corridorMeters
+            );
+
+            // If strict corridor returns nothing (common for stays/food), fall back
+            // to nearest-to-route options so the panel is still useful.
+            const chosen =
+              withinCorridor.length > 0 ? withinCorridor : scored.slice(0, 80);
+
+            // User requested all attractions en route: do not hard-cap in route mode.
+            return chosen.map((item) => item.poi);
+          })()
+        : merged.slice(0, 40);
       setResults(finalResults);
 
       if (type === "attractions") {
         setAttractions(finalResults);
         setStays([]);
         setFood([]);
+        setParking([]);
       } else if (type === "stays") {
         setStays(finalResults);
         setAttractions([]);
         setFood([]);
-      } else {
+        setParking([]);
+      } else if (type === "food") {
         setFood(finalResults);
         setAttractions([]);
         setStays([]);
+        setParking([]);
+      } else {
+        setParking(finalResults);
+        setAttractions([]);
+        setStays([]);
+        setFood([]);
       }
     } catch {
       setResults([]);
       setAttractions([]);
       setStays([]);
       setFood([]);
+      setParking([]);
     } finally {
       setLoading(false);
     }
@@ -217,8 +319,10 @@ export function WaypointExplorePanel() {
     hasGeneratedRoute,
     route?.geometry?.coordinates,
     searchRadius,
+    routeCorridorMeters,
     setAttractions,
     setFood,
+    setParking,
     setStays,
   ]);
 
@@ -286,19 +390,29 @@ export function WaypointExplorePanel() {
     );
 
   const tabIcon = (t: ExploreTab) =>
-    t === "attractions" ? Landmark : t === "stays" ? Hotel : Utensils;
+    t === "attractions"
+      ? Landmark
+      : t === "stays"
+        ? Hotel
+        : t === "food"
+          ? Utensils
+          : Car;
   const tabColor = (t: ExploreTab) =>
     t === "attractions"
       ? "text-amber-600"
       : t === "stays"
         ? "text-purple-600"
-        : "text-rose-600";
+        : t === "food"
+          ? "text-rose-600"
+          : "text-slate-600";
   const tabBg = (t: ExploreTab) =>
     t === "attractions"
       ? "bg-amber-50 hover:bg-amber-100 border-amber-200"
       : t === "stays"
         ? "bg-purple-50 hover:bg-purple-100 border-purple-200"
-        : "bg-rose-50 hover:bg-rose-100 border-rose-200";
+        : t === "food"
+          ? "bg-rose-50 hover:bg-rose-100 border-rose-200"
+          : "bg-slate-50 hover:bg-slate-100 border-slate-200";
 
   if (!wp && !isRouteMode) return null;
 
@@ -443,12 +557,10 @@ export function WaypointExplorePanel() {
               ? "Attractions"
               : tab === "stays"
                 ? "Stays"
-                : "Food & Dining"}{" "}
-            near {(isRouteMode || (tab === "attractions" && hasGeneratedRoute))
-              ? "your route"
-              : wp
-                ? wp.name.split(",")[0]
-                : ""}
+                : tab === "food"
+                  ? "Food & Dining"
+                  : "Parking"}{" "}
+            near {isRouteMode ? "your route" : wp ? wp.name.split(",")[0] : ""}
           </span>
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleClose}>
             <X className="h-4 w-4" />
@@ -483,7 +595,9 @@ export function WaypointExplorePanel() {
                         ? "bg-amber-100"
                         : tab === "stays"
                           ? "bg-purple-100"
-                          : "bg-rose-100"
+                          : tab === "food"
+                            ? "bg-rose-100"
+                            : "bg-slate-100"
                     }`}>
                       <Icon className={`h-3.5 w-3.5 ${color}`} />
                     </div>
@@ -577,11 +691,35 @@ export function WaypointExplorePanel() {
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
           Explore nearby
         </p>
+        {isRouteMode && (
+          <div className="rounded-md border bg-muted/30 px-2.5 py-2 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-muted-foreground">
+                Route corridor
+              </span>
+              <span className="text-[11px] font-medium text-foreground">
+                {(routeCorridorMeters / 1000).toFixed(0)} km
+              </span>
+            </div>
+            <Slider
+              value={[Math.round(routeCorridorMeters / 1000)]}
+              min={0}
+              max={100}
+              step={1}
+              onValueChange={([km]) => setRouteCorridorMeters(km * 1000)}
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>0 km</span>
+              <span>100 km</span>
+            </div>
+          </div>
+        )}
         {(
           [
             { key: "attractions" as ExploreTab, icon: Landmark, label: "Attractions & Sights", desc: "Museums, monuments, landmarks" },
             { key: "stays" as ExploreTab, icon: Hotel, label: "Stays & Accommodation", desc: "Hotels, hostels, apartments" },
             { key: "food" as ExploreTab, icon: Utensils, label: "Food & Dining", desc: "Restaurants, cafes, bars" },
+            { key: "parking" as ExploreTab, icon: Car, label: "Parking spots", desc: "Garages, lots, street parking" },
           ] as const
         ).map(({ key, icon: BtnIcon, label, desc }) => (
           <button

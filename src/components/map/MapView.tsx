@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Map, { NavigationControl, MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { useMapStore, getMapStyleUrl } from "@/stores/mapStore";
@@ -18,8 +18,14 @@ interface MapViewProps {
 
 export function MapView({ mapboxToken }: MapViewProps) {
   const mapRef = useRef<MapRef>(null);
-  const { viewState, setViewState, mapStyle, pickPointsMode, setPickPointsMode } =
-    useMapStore();
+  const {
+    viewState,
+    setViewState,
+    mapStyle,
+    pickPointsMode,
+    setPickPointsMode,
+    sidebarOpen,
+  } = useMapStore();
   const insertWaypointNear = useTripStore((s) => s.insertWaypointNear);
   const addWaypoint = useTripStore((s) => s.addWaypoint);
   const waypoints = useTripStore((s) => s.waypoints);
@@ -49,6 +55,21 @@ export function MapView({ mapboxToken }: MapViewProps) {
     },
     []
   );
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    // Ensure the map recalculates canvas size when layout changes.
+    const timer = window.setTimeout(() => {
+      map.resize();
+    }, 60);
+    const onResize = () => map.resize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [sidebarOpen]);
 
   return (
     <div className="relative w-full h-full overflow-visible">
@@ -82,6 +103,7 @@ export function MapView({ mapboxToken }: MapViewProps) {
         <POIMarkers type="attractions" />
         <POIMarkers type="stays" />
         <POIMarkers type="food" />
+        <POIMarkers type="parking" />
       </Map>
       {pickPointsMode && (
         <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 z-[60]">

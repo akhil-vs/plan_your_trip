@@ -45,6 +45,7 @@ interface TripState {
   attractions: POI[];
   stays: POI[];
   food: POI[];
+  parking: POI[];
   selectedPOI: POI | null;
   hoveredPOIId: string | null;
   loading: {
@@ -52,6 +53,7 @@ interface TripState {
     attractions: boolean;
     stays: boolean;
     food: boolean;
+    parking: boolean;
   };
 
   setTripId: (id: string | null) => void;
@@ -80,6 +82,7 @@ interface TripState {
   setAttractions: (pois: POI[]) => void;
   setStays: (pois: POI[]) => void;
   setFood: (pois: POI[]) => void;
+  setParking: (pois: POI[]) => void;
   setSelectedPOI: (poi: POI | null) => void;
   setHoveredPOIId: (poiId: string | null) => void;
   setLoading: (key: keyof TripState["loading"], val: boolean) => void;
@@ -96,9 +99,16 @@ const initialState = {
   attractions: [] as POI[],
   stays: [] as POI[],
   food: [] as POI[],
+  parking: [] as POI[],
   selectedPOI: null,
   hoveredPOIId: null,
-  loading: { route: false, attractions: false, stays: false, food: false },
+  loading: {
+    route: false,
+    attractions: false,
+    stays: false,
+    food: false,
+    parking: false,
+  },
 };
 
 export const useTripStore = create<TripState>((set, get) => ({
@@ -189,6 +199,7 @@ export const useTripStore = create<TripState>((set, get) => ({
   setAttractions: (pois) => set({ attractions: pois }),
   setStays: (pois) => set({ stays: pois }),
   setFood: (pois) => set({ food: pois }),
+  setParking: (pois) => set({ parking: pois }),
   setSelectedPOI: (poi) => set({ selectedPOI: poi }),
   setHoveredPOIId: (hoveredPOIId) => set({ hoveredPOIId }),
 

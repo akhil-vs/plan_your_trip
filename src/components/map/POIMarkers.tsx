@@ -3,22 +3,24 @@
 import { Marker, Popup } from "react-map-gl/mapbox";
 import { useTripStore, POI } from "@/stores/tripStore";
 import { useState, useMemo } from "react";
-import { Landmark, Utensils, Hotel, Star } from "lucide-react";
+import { Landmark, Utensils, Hotel, Car, Star } from "lucide-react";
 
 const ICONS = {
   attractions: Landmark,
   stays: Hotel,
   food: Utensils,
+  parking: Car,
 };
 
 const COLORS = {
   attractions: { bg: "bg-amber-500", text: "text-amber-500" },
   stays: { bg: "bg-purple-500", text: "text-purple-500" },
   food: { bg: "bg-rose-500", text: "text-rose-500" },
+  parking: { bg: "bg-slate-600", text: "text-slate-600" },
 };
 
 interface POIMarkersProps {
-  type: "attractions" | "stays" | "food";
+  type: "attractions" | "stays" | "food" | "parking";
 }
 
 export function POIMarkers({ type }: POIMarkersProps) {

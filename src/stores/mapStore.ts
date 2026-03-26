@@ -24,6 +24,7 @@ interface MapState {
   dayEndMinutes: number;
   defaultVisitMinutes: number;
   searchRadius: number;
+  routeCorridorMeters: number;
   sidebarOpen: boolean;
   activeWaypoint: ActiveWaypoint | null;
   routeSummaryOpen: boolean;
@@ -37,6 +38,7 @@ interface MapState {
   setDayEndMinutes: (minutes: number) => void;
   setDefaultVisitMinutes: (minutes: number) => void;
   setSearchRadius: (radius: number) => void;
+  setRouteCorridorMeters: (meters: number) => void;
   setSidebarOpen: (open: boolean) => void;
   setActiveWaypoint: (wp: ActiveWaypoint | null) => void;
   setRouteSummaryOpen: (open: boolean) => void;
@@ -66,6 +68,7 @@ export const useMapStore = create<MapState>((set) => ({
   dayEndMinutes: 20 * 60,
   defaultVisitMinutes: 60,
   searchRadius: 10,
+  routeCorridorMeters: 1000,
   sidebarOpen: true,
   activeWaypoint: null,
   routeSummaryOpen: false,
@@ -81,6 +84,7 @@ export const useMapStore = create<MapState>((set) => ({
   setDayEndMinutes: (dayEndMinutes) => set({ dayEndMinutes }),
   setDefaultVisitMinutes: (defaultVisitMinutes) => set({ defaultVisitMinutes }),
   setSearchRadius: (searchRadius) => set({ searchRadius }),
+  setRouteCorridorMeters: (routeCorridorMeters) => set({ routeCorridorMeters }),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setActiveWaypoint: (activeWaypoint) =>
     set((s) => ({

@@ -1434,10 +1434,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      if (!collaborationEnabled) return;
                       setMembersOpen(true);
                     }}
-                    disabled={!effectiveTripId || !collaborationEnabled}
                     className="gap-1.5"
                   >
                     <Users className="h-4 w-4" />

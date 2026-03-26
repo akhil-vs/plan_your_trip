@@ -34,6 +34,7 @@ import {
   FileDown,
   Users2,
   Globe,
+  Shield,
 } from "lucide-react";
 
 function WhatsAppIcon({ className }: { className?: string }) {
@@ -266,6 +267,17 @@ export default function DashboardPage() {
                     {session?.user?.email}
                   </p>
                 </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => router.push("/profile")}>
+                  <User className="h-4 w-4 mr-2" />
+                  Profile & membership
+                </DropdownMenuItem>
+                {session?.user?.isAdmin && (
+                  <DropdownMenuItem onClick={() => router.push("/admin")}>
+                    <Shield className="h-4 w-4 mr-2" />
+                    Admin panel
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => signOut({ callbackUrl: "/" })}
