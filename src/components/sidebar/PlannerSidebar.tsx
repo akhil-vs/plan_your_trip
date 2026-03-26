@@ -146,12 +146,16 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setDayStartMinutes,
     setDayEndMinutes,
     setDefaultVisitMinutes,
+    pickPointsMode,
+    setPickPointsMode,
+    setRouteExploreOpen,
   } = useMapStore();
   const {
     tripId: activeTripId,
     waypoints,
     tripName,
     selectedPOI,
+    route,
     setTripName,
     setTripId,
     setRoute,
@@ -1208,7 +1212,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   if (!sidebarOpen) {
     return (
-      <div className="absolute top-3 left-3 sm:top-4 sm:left-4 z-10 flex items-center gap-2">
+      <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-10 flex items-center gap-2">
         <Link
           href={session?.user ? "/dashboard" : "/"}
           className="p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
@@ -1236,7 +1240,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         onClick={() => setSidebarOpen(false)}
         aria-hidden="true"
       />
-      <div className="w-[min(100vw,400px)] lg:w-[380px] h-full bg-white lg:border-r flex flex-col shrink-0 relative overflow-hidden lg:relative max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:shadow-2xl max-lg:rounded-r-xl">
+      <div className="w-[min(100vw,400px)] max-w-full lg:w-[380px] h-full bg-white lg:border-r flex flex-col shrink-0 relative overflow-hidden lg:relative max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:shadow-2xl max-lg:rounded-r-xl">
       {/* Header */}
       <div className="p-4 border-b space-y-3">
         <div className="flex items-center justify-between">
@@ -1277,7 +1281,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               </div>
             ) : (
               <button
-                className="text-sm font-semibold truncate flex items-center gap-1 hover:text-blue-600"
+                className="text-sm font-semibold truncate min-w-0 text-left flex items-center gap-1 hover:text-blue-600"
                 disabled={!canEditTrip}
                 onClick={() => {
                   if (!canEditTrip) return;
@@ -1302,7 +1306,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
         {session?.user && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={tripStatus === "FINALIZED" ? "default" : "secondary"}>
                   {lifecycleLabelByStage[lifecycleStage]}
                 </Badge>
@@ -1315,7 +1319,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               <p className="text-[11px] text-muted-foreground">
                 {lifecycleHintByStage[lifecycleStage]}
               </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 {!effectiveTripId ? (
                   <Button
                     onClick={handleSave}
@@ -1411,7 +1415,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                 )}
               </button>
               {advancedActionsOpen && (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -1494,12 +1498,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </div>
         )}
         {showDayPlanner && optimizationHistory.length > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <Button
               onClick={handleUndoOptimization}
               variant="ghost"
               size="sm"
-              className="gap-1.5 min-h-8"
+              className="gap-1.5 min-h-8 w-full sm:w-auto"
             >
               <Undo2 className="h-4 w-4" />
               Undo last optimization
@@ -1508,7 +1512,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               onClick={handleResetAllOptimizations}
               variant="ghost"
               size="sm"
-              className="gap-1.5 min-h-8 text-amber-700 hover:text-amber-800"
+              className="gap-1.5 min-h-8 w-full sm:w-auto text-amber-700 hover:text-amber-800"
             >
               <RotateCcw className="h-4 w-4" />
               Reset all
@@ -1602,12 +1606,42 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               </div>
             )}
             <Separator className="my-4" />
+            <div className="space-y-2">
+              <Button
+                size="sm"
+                variant={pickPointsMode ? "default" : "outline"}
+                onClick={() => {
+                  if (!canEditTrip) return;
+                  setPickPointsMode(!pickPointsMode);
+                }}
+                disabled={!canEditTrip}
+                className="w-full gap-2"
+              >
+                <MapPin className="h-4 w-4" />
+                {pickPointsMode ? "Pick mode: On" : "Pick points from map"}
+              </Button>
+              {route?.geometry && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setPickPointsMode(false);
+                    setRouteExploreOpen(true);
+                  }}
+                  disabled={!canEditTrip}
+                  className="w-full gap-2"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Explore attractions near route
+                </Button>
+              )}
+            </div>
             <FilterPanel />
             {waypoints.length >= 3 && (
               <>
                 <Separator className="my-4" />
                 <div className="rounded-md border bg-blue-50/60 p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
                       Day-by-Day Itinerary
                     </p>
@@ -1660,7 +1694,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         />
       )}
       <Sheet open={dayPlannerOpen} onOpenChange={setDayPlannerOpen}>
-        <SheetContent side="right" className="sm:max-w-lg w-[92vw]">
+        <SheetContent side="right" className="sm:max-w-lg w-[96vw] sm:w-[92vw]">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <CalendarDays className="h-4 w-4" />
@@ -1672,7 +1706,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             </SheetDescription>
           </SheetHeader>
           <div className="px-4 pb-4 space-y-3 overflow-y-auto">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <p className="text-[11px] text-muted-foreground mb-1">Day start</p>
                 <Input
@@ -1791,9 +1825,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                               key={id}
                               className="rounded border bg-muted/30 px-2 py-1.5 space-y-1.5"
                             >
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-start gap-2">
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-xs truncate">{wp.name}</p>
+                                  <p className="text-xs break-words leading-snug">
+                                    {wp.name}
+                                  </p>
                                   {wp.isTransitSplit && (
                                     <p className="text-[10px] text-muted-foreground">
                                       {(() => {
@@ -1810,11 +1846,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                                     Transit
                                   </Badge>
                                 )}
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-1 shrink-0">
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6"
+                                    className="h-8 w-8 sm:h-6 sm:w-6"
                                     onClick={() =>
                                       moveWaypointAcrossDays(dayPlan.day, id, "prev")
                                     }
@@ -1826,7 +1862,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6"
+                                    className="h-8 w-8 sm:h-6 sm:w-6"
                                     onClick={() =>
                                       moveWaypointWithinDay(dayPlan.day, id, "up")
                                     }
@@ -1838,7 +1874,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6"
+                                    className="h-8 w-8 sm:h-6 sm:w-6"
                                     onClick={() =>
                                       moveWaypointWithinDay(dayPlan.day, id, "down")
                                     }
@@ -1852,7 +1888,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6"
+                                    className="h-8 w-8 sm:h-6 sm:w-6"
                                     onClick={() =>
                                       moveWaypointAcrossDays(dayPlan.day, id, "next")
                                     }
@@ -1902,7 +1938,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         </SheetContent>
       </Sheet>
       <Sheet open={membersOpen} onOpenChange={setMembersOpen}>
-        <SheetContent side="right" className="sm:max-w-md w-[90vw]">
+        <SheetContent side="right" className="sm:max-w-md w-[96vw] sm:w-[90vw]">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <Users className="h-4 w-4" />
@@ -1928,7 +1964,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         </SheetContent>
       </Sheet>
       <Sheet open={activityOpen} onOpenChange={setActivityOpen}>
-        <SheetContent side="right" className="sm:max-w-md w-[90vw]">
+        <SheetContent side="right" className="sm:max-w-md w-[96vw] sm:w-[90vw]">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <History className="h-4 w-4" />

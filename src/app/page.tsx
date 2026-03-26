@@ -55,22 +55,22 @@ export default function HomePage() {
     <div className="min-h-screen">
       {/* Navbar */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
           <Link href="/" className="flex items-center gap-2">
-            <MapPin className="h-7 w-7 text-blue-600" />
-            <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
+            <MapPin className="h-6 w-6 sm:h-7 sm:w-7 text-blue-600" />
+            <span className="hidden min-[361px]:inline text-lg sm:text-xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
               PlanYourTrip
             </span>
           </Link>
-          <div className="flex items-center gap-3">
-            <Link href="/pricing">
-              <Button variant="ghost">Pricing</Button>
+          <div className="flex items-center gap-1 sm:gap-3">
+            <Link href="/pricing" className="hidden sm:block">
+              <Button variant="ghost" size="sm">Pricing</Button>
             </Link>
             <Link href="/auth/login">
-              <Button variant="ghost">Sign in</Button>
+              <Button variant="ghost" size="sm">Sign in</Button>
             </Link>
             <Link href="/auth/register">
-              <Button>Get started</Button>
+              <Button size="sm">Get started</Button>
             </Link>
           </div>
         </div>
@@ -195,11 +195,11 @@ export default function HomePage() {
             Join travelers who plan with clarity, collaborate smoothly, and share
             polished itineraries.
           </p>
-          <Link href="/auth/register">
+          <Link href="/auth/register" className="inline-block w-full sm:w-auto">
             <Button
               size="lg"
               variant="secondary"
-              className="text-lg px-8 py-6"
+              className="w-full sm:w-auto text-lg px-8 py-6"
             >
               Create free account
             </Button>

@@ -129,7 +129,18 @@ export const useTripStore = create<TripState>((set, get) => ({
   },
 
   reorderWaypoints: (waypoints) => {
-    set({ waypoints: waypoints.map((w, i) => ({ ...w, order: i })) });
+    const usedIds = new Set<string>();
+    const normalized = waypoints.map((w, i) => {
+      let id = w.id;
+      let suffix = 1;
+      while (usedIds.has(id)) {
+        id = `${w.id}-dup-${suffix}`;
+        suffix += 1;
+      }
+      usedIds.add(id);
+      return { ...w, id, order: i };
+    });
+    set({ waypoints: normalized });
   },
 
   updateWaypoint: (id, data) => {

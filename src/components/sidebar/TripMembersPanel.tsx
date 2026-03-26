@@ -174,16 +174,16 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
             placeholder="email@example.com"
             className="h-8 text-xs"
           />
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <select
-              className="h-8 rounded-md border px-2 text-xs bg-background"
+              className="h-8 rounded-md border px-2 text-xs bg-background w-full sm:w-auto"
               value={role}
               onChange={(e) => setRole(e.target.value as MemberRole)}
             >
               <option value="EDITOR">Editor</option>
               <option value="VIEWER">Viewer</option>
             </select>
-            <Button size="sm" className="gap-1.5" onClick={inviteMember}>
+            <Button size="sm" className="gap-1.5 w-full sm:w-auto" onClick={inviteMember}>
               <UserPlus className="h-3.5 w-3.5" />
               Send invite
             </Button>

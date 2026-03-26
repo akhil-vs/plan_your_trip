@@ -71,7 +71,7 @@ export function POIMarkers({ type }: POIMarkersProps) {
           closeButton={true}
           offset={18}
         >
-          <div className="p-2 min-w-[180px] max-w-[240px]">
+          <div className="p-2 min-w-[160px] max-w-[220px]">
             <p className="font-semibold text-sm">{popupPOI.name}</p>
             {popupPOI.subcategory && (
               <p className="text-xs text-gray-500 capitalize mt-0.5">

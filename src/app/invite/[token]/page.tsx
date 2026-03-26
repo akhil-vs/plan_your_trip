@@ -43,7 +43,7 @@ export default function InviteAcceptPage() {
 
   if (status === "unauthenticated") {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-6">
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle>Trip Invite</CardTitle>
@@ -51,7 +51,7 @@ export default function InviteAcceptPage() {
           </CardHeader>
           <CardContent>
             <Button
-              className="w-full"
+              className="w-full min-h-11 touch-manipulation"
               onClick={() =>
                 router.push(
                   `/auth/login?callbackUrl=${encodeURIComponent(pathname || "/dashboard")}`
@@ -67,7 +67,7 @@ export default function InviteAcceptPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-6">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Join Trip Collaboration</CardTitle>
@@ -78,7 +78,11 @@ export default function InviteAcceptPage() {
         <CardContent className="space-y-3">
           {message && <p className="text-sm text-green-600">{message}</p>}
           {error && <p className="text-sm text-red-500">{error}</p>}
-          <Button onClick={handleAccept} disabled={loading || !token} className="w-full gap-2">
+          <Button
+            onClick={handleAccept}
+            disabled={loading || !token}
+            className="w-full gap-2 min-h-11 touch-manipulation"
+          >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
             Accept invite
           </Button>

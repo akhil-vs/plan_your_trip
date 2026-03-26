@@ -110,12 +110,12 @@ export default function SharedTripPage() {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-sm text-muted-foreground">Loading shared itinerary...</div>;
+    return <div className="min-h-screen p-8 text-center text-sm text-muted-foreground">Loading shared itinerary...</div>;
   }
 
   if (error || !trip) {
     return (
-      <div className="p-8 text-center">
+      <div className="min-h-screen p-8 text-center">
         <p className="text-red-600">{error || "Shared itinerary not found"}</p>
         <Link href="/">
           <Button className="mt-4">Go Home</Button>
@@ -126,10 +126,10 @@ export default function SharedTripPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto px-4 py-8">
+      <div className="max-w-3xl mx-auto px-3 sm:px-4 py-5 sm:py-8">
         <Card>
           <CardHeader className="space-y-2">
-            <CardTitle className="text-2xl">{trip.name}</CardTitle>
+            <CardTitle className="text-xl sm:text-2xl break-words">{trip.name}</CardTitle>
             <p className="text-sm text-muted-foreground">
               Shared by {trip.user?.name || "Traveler"} · Updated {formattedDate}
             </p>
@@ -138,12 +138,12 @@ export default function SharedTripPage() {
             )}
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap items-center gap-2 mb-5">
-              <Button onClick={handleClone} disabled={cloning} className="gap-2">
+            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 mb-5">
+              <Button onClick={handleClone} disabled={cloning} className="gap-2 w-full sm:w-auto">
                 <Route className="h-4 w-4" />
                 {cloning ? "Saving..." : "Save itinerary"}
               </Button>
-              <Button variant="outline" onClick={handleCopy} className="gap-2">
+              <Button variant="outline" onClick={handleCopy} className="gap-2 w-full sm:w-auto">
                 <Copy className="h-4 w-4" />
                 {copying ? "Link copied" : "Copy share link"}
               </Button>
@@ -153,7 +153,7 @@ export default function SharedTripPage() {
               <div className="space-y-3">
                 {trip.dayPlans.map((dayPlan) => (
                   <div key={dayPlan.day} className="rounded-md border p-3">
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
                       <p className="text-sm font-medium">Day {dayPlan.day}</p>
                       <p className="text-xs text-muted-foreground">
                         {formatMinutes(dayPlan.estimatedTravelMinutes)} travel
@@ -179,10 +179,10 @@ export default function SharedTripPage() {
                             arr.findIndex((candidate) => candidate.id === wp.id) === idx
                         )
                         .map((wp, idx) => (
-                          <div key={`${dayPlan.day}-${wp.id}-${idx}`} className="flex items-center text-sm">
-                            <span className="w-6 text-muted-foreground">{idx + 1}.</span>
+                          <div key={`${dayPlan.day}-${wp.id}-${idx}`} className="flex items-start text-sm">
+                            <span className="w-6 text-muted-foreground shrink-0">{idx + 1}.</span>
                             <MapPin className="h-3.5 w-3.5 mr-2 text-blue-600" />
-                            <span>{wp.name}</span>
+                            <span className="break-words">{wp.name}</span>
                           </div>
                         ))}
                     </div>
@@ -192,10 +192,10 @@ export default function SharedTripPage() {
             ) : (
               <div className="space-y-2">
                 {trip.waypoints.map((wp, idx) => (
-                  <div key={wp.id} className="flex items-center text-sm">
-                    <span className="w-6 text-muted-foreground">{idx + 1}.</span>
+                  <div key={wp.id} className="flex items-start text-sm">
+                    <span className="w-6 text-muted-foreground shrink-0">{idx + 1}.</span>
                     <MapPin className="h-3.5 w-3.5 mr-2 text-blue-600" />
-                    <span>{wp.name}</span>
+                    <span className="break-words">{wp.name}</span>
                   </div>
                 ))}
               </div>

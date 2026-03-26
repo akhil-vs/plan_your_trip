@@ -52,7 +52,7 @@ function SortableWaypoint({
     <div
       ref={setNodeRef}
       style={style}
-      className="rounded-lg border bg-white hover:bg-gray-50 group p-2 space-y-2"
+      className="rounded-lg border bg-white hover:bg-gray-50 group p-2 space-y-2 overflow-hidden"
     >
       <div className="flex items-center gap-2">
         <button

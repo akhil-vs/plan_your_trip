@@ -27,6 +27,8 @@ interface MapState {
   sidebarOpen: boolean;
   activeWaypoint: ActiveWaypoint | null;
   routeSummaryOpen: boolean;
+  pickPointsMode: boolean;
+  routeExploreOpen: boolean;
 
   setViewState: (vs: Partial<MapState["viewState"]>) => void;
   setMapStyle: (style: MapStyle) => void;
@@ -38,6 +40,8 @@ interface MapState {
   setSidebarOpen: (open: boolean) => void;
   setActiveWaypoint: (wp: ActiveWaypoint | null) => void;
   setRouteSummaryOpen: (open: boolean) => void;
+  setPickPointsMode: (open: boolean) => void;
+  setRouteExploreOpen: (open: boolean) => void;
 }
 
 const MAP_STYLES: Record<MapStyle, string> = {
@@ -65,6 +69,8 @@ export const useMapStore = create<MapState>((set) => ({
   sidebarOpen: true,
   activeWaypoint: null,
   routeSummaryOpen: false,
+  pickPointsMode: false,
+  routeExploreOpen: false,
 
   setViewState: (vs) =>
     set((s) => ({ viewState: { ...s.viewState, ...vs } })),
@@ -79,11 +85,29 @@ export const useMapStore = create<MapState>((set) => ({
   setActiveWaypoint: (activeWaypoint) =>
     set((s) => ({
       activeWaypoint,
+      routeExploreOpen: activeWaypoint ? false : s.routeExploreOpen,
+      pickPointsMode: activeWaypoint ? false : s.pickPointsMode,
       routeSummaryOpen: activeWaypoint ? false : s.routeSummaryOpen,
     })),
   setRouteSummaryOpen: (routeSummaryOpen) =>
     set((s) => ({
       routeSummaryOpen,
       activeWaypoint: routeSummaryOpen ? null : s.activeWaypoint,
+    })),
+  setPickPointsMode: (pickPointsMode) =>
+    set((s) => ({
+      pickPointsMode,
+      // prevent overlay conflicts
+      activeWaypoint: pickPointsMode ? null : s.activeWaypoint,
+      routeExploreOpen: pickPointsMode ? false : s.routeExploreOpen,
+      routeSummaryOpen: pickPointsMode ? false : s.routeSummaryOpen,
+    })),
+  setRouteExploreOpen: (routeExploreOpen) =>
+    set((s) => ({
+      routeExploreOpen,
+      // prevent overlay conflicts
+      pickPointsMode: routeExploreOpen ? false : s.pickPointsMode,
+      activeWaypoint: routeExploreOpen ? null : s.activeWaypoint,
+      routeSummaryOpen: routeExploreOpen ? false : s.routeSummaryOpen,
     })),
 }));

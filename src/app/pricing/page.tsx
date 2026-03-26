@@ -58,19 +58,19 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
           <Link href="/" className="flex items-center gap-2">
             <MapPin className="h-6 w-6 text-blue-600" />
-            <span className="text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
+            <span className="hidden min-[361px]:inline text-base sm:text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
               PlanYourTrip
             </span>
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <Link href="/auth/login">
-              <Button variant="ghost">Sign in</Button>
+              <Button variant="ghost" size="sm">Sign in</Button>
             </Link>
             <Link href="/auth/register">
-              <Button>Get started</Button>
+              <Button size="sm">Get started</Button>
             </Link>
           </div>
         </div>

@@ -237,10 +237,10 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
           <Link href="/" className="flex items-center gap-2">
             <MapPin className="h-6 w-6 text-blue-600" />
-            <span className="text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
+            <span className="hidden min-[361px]:inline text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
               PlanYourTrip
             </span>
           </Link>
@@ -259,7 +259,7 @@ export default function DashboardPage() {
                   </div>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" sideOffset={8} collisionPadding={12}>
                 <div className="px-2 py-1.5">
                   <p className="text-sm font-medium">{session?.user?.name}</p>
                   <p className="text-xs text-muted-foreground">
@@ -372,11 +372,11 @@ export default function DashboardPage() {
             )}
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6 mb-10">
             {myTrips.map((trip) => (
               <Card
                 key={trip.id}
-                className="group hover:shadow-lg transition-shadow cursor-pointer"
+                className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden"
                 onClick={() => router.push(`/planner/${trip.id}`)}
               >
                 <CardHeader className="pb-3">
@@ -412,7 +412,12 @@ export default function DashboardPage() {
                           <MoreVertical className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuContent
+                        align="end"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        className="w-56"
+                      >
                         <DropdownMenuItem
                           onClick={(e) => handleCopyLink(e, trip.id)}
                           disabled={!trip.isPublic}
@@ -473,7 +478,7 @@ export default function DashboardPage() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-muted-foreground">
                     <div className="flex items-center gap-1">
                       <MapPin className="h-3.5 w-3.5" />
                       {trip.waypoints.length} stop{trip.waypoints.length !== 1 ? "s" : ""}
@@ -519,11 +524,11 @@ export default function DashboardPage() {
                 No published trips available right now.
               </p>
             ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
                 {publicTrips.map((trip) => (
                   <Card
                     key={trip.id}
-                    className="group hover:shadow-lg transition-shadow cursor-pointer"
+                    className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden"
                     onClick={() => router.push(`/share/${trip.shareId}`)}
                   >
                     <CardHeader className="pb-3">
@@ -542,7 +547,7 @@ export default function DashboardPage() {
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-muted-foreground">
                         <div className="flex items-center gap-1">
                           <MapPin className="h-3.5 w-3.5" />
                           {trip.waypoints.length} stop
@@ -563,12 +568,12 @@ export default function DashboardPage() {
       </div>
 
       {copiedId && (
-        <div className="fixed bottom-4 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-6 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-6 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center pb-[max(0.625rem,env(safe-area-inset-bottom))]">
           Share link copied to clipboard
         </div>
       )}
       {statusMessage && (
-        <div className="fixed bottom-16 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-20 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center">
+        <div className="fixed bottom-16 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-20 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center pb-[max(0.625rem,env(safe-area-inset-bottom))]">
           {statusMessage}
         </div>
       )}

@@ -38,7 +38,14 @@ interface PlaceDetail {
 }
 
 export function WaypointExplorePanel() {
-  const { activeWaypoint, setActiveWaypoint, searchRadius } = useMapStore();
+  const {
+    activeWaypoint,
+    setActiveWaypoint,
+    searchRadius,
+    routeExploreOpen,
+    setRouteExploreOpen,
+  } = useMapStore();
+  const route = useTripStore((s) => s.route);
   const {
     insertWaypointNear,
     waypoints,
@@ -59,18 +66,37 @@ export function WaypointExplorePanel() {
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
 
   const wp = activeWaypoint;
+  const isRouteMode =
+    routeExploreOpen &&
+    !wp &&
+    Boolean(route?.geometry?.coordinates && route.geometry.coordinates.length > 1);
+
+  const routeCenter = route?.geometry?.coordinates?.[0]
+    ? { lat: route.geometry.coordinates[0][1], lng: route.geometry.coordinates[0][0] }
+    : null;
+  const hasGeneratedRoute =
+    Boolean(route?.geometry?.coordinates && route.geometry.coordinates.length > 1);
 
   useEffect(() => {
-    if (wp) return;
+    if (wp || isRouteMode) return;
     setAttractions([]);
     setStays([]);
     setFood([]);
     setGlobalSelectedPOI(null);
     setHoveredPOIId(null);
-  }, [wp, setAttractions, setFood, setGlobalSelectedPOI, setHoveredPOIId, setStays]);
+  }, [
+    wp,
+    isRouteMode,
+    setAttractions,
+    setFood,
+    setGlobalSelectedPOI,
+    setHoveredPOIId,
+    setStays,
+  ]);
 
   const handleClose = () => {
     setActiveWaypoint(null);
+    setRouteExploreOpen(false);
     setTab("menu");
     setResults([]);
     setSelectedPOI(null);
@@ -99,37 +125,83 @@ export function WaypointExplorePanel() {
   };
 
   const handleSearch = useCallback(async (type: ExploreTab) => {
-    if (!wp) return;
+    if (!wp && !isRouteMode) return;
     setTab(type);
     setLoading(true);
     setResults([]);
     try {
+      const routeCoords = route?.geometry?.coordinates ?? [];
+      const sampleMax = 5;
+      const useRouteSampling = type === "attractions" && hasGeneratedRoute;
+      const samplePoints: Array<{ lat: number; lng: number }> = useRouteSampling
+        ? (() => {
+            const coords = routeCoords;
+            if (!coords.length) return [];
+            const maxSamples = Math.min(sampleMax, coords.length);
+            const step = Math.max(1, Math.floor(coords.length / maxSamples));
+            const sample = coords
+              .filter((_, i) => i === 0 || (step > 0 && i % step === 0))
+              .slice(0, maxSamples)
+              .map((c) => ({ lng: c[0], lat: c[1] }));
+            const last = coords[coords.length - 1];
+            const lastPoint = { lng: last[0], lat: last[1] };
+            if (
+              lastPoint.lat !== sample[sample.length - 1]?.lat ||
+              lastPoint.lng !== sample[sample.length - 1]?.lng
+            ) {
+              sample.push(lastPoint);
+            }
+            return sample;
+          })()
+        : wp
+          ? [{ lat: wp.lat, lng: wp.lng }]
+          : [];
+
+      const seen = new Set<string>();
+      const merged: typeof results = [];
+
+      for (const pt of samplePoints) {
+        if (type === "attractions") {
+          const pois = await fetchAttractions(pt.lat, pt.lng, {
+            radius: searchRadius,
+            kinds: "interesting_places",
+          });
+          for (const poi of pois) {
+            if (seen.has(poi.id)) continue;
+            seen.add(poi.id);
+            merged.push(poi);
+          }
+        } else {
+          const category = type === "stays" ? "accommodation" : "catering";
+          const pois = await fetchPlaces(pt.lat, pt.lng, {
+            radius: searchRadius,
+            categories: category,
+          });
+          for (const poi of pois) {
+            if (seen.has(poi.id)) continue;
+            seen.add(poi.id);
+            merged.push(poi);
+          }
+        }
+        // Keep UI responsive if we get a lot of results
+        if (merged.length >= 40) break;
+      }
+
+      const finalResults = merged.slice(0, 40);
+      setResults(finalResults);
+
       if (type === "attractions") {
-        const pois = await fetchAttractions(wp.lat, wp.lng, {
-          radius: searchRadius,
-          kinds: "interesting_places",
-        });
-        setResults(pois);
-        setAttractions(pois);
+        setAttractions(finalResults);
         setStays([]);
         setFood([]);
+      } else if (type === "stays") {
+        setStays(finalResults);
+        setAttractions([]);
+        setFood([]);
       } else {
-        const category =
-          type === "stays" ? "accommodation" : "catering";
-        const pois = await fetchPlaces(wp.lat, wp.lng, {
-          radius: searchRadius,
-          categories: category,
-        });
-        setResults(pois);
-        if (type === "stays") {
-          setStays(pois);
-          setAttractions([]);
-          setFood([]);
-        } else {
-          setFood(pois);
-          setAttractions([]);
-          setStays([]);
-        }
+        setFood(finalResults);
+        setAttractions([]);
+        setStays([]);
       }
     } catch {
       setResults([]);
@@ -139,13 +211,22 @@ export function WaypointExplorePanel() {
     } finally {
       setLoading(false);
     }
-  }, [wp, searchRadius, setAttractions, setFood, setStays]);
+  }, [
+    wp,
+    isRouteMode,
+    hasGeneratedRoute,
+    route?.geometry?.coordinates,
+    searchRadius,
+    setAttractions,
+    setFood,
+    setStays,
+  ]);
 
   // Refetch results when search radius changes (while viewing attractions/stays/food)
   useEffect(() => {
-    if (!wp || tab === "menu" || selectedPOI) return;
+    if ((!wp && !isRouteMode) || tab === "menu" || selectedPOI) return;
     handleSearch(tab);
-  }, [searchRadius]);
+  }, [searchRadius, tab, selectedPOI, wp, isRouteMode, handleSearch]);
 
   const handleSelectPOI = async (poi: POI) => {
     setSelectedPOI(poi);
@@ -219,7 +300,7 @@ export function WaypointExplorePanel() {
         ? "bg-purple-50 hover:bg-purple-100 border-purple-200"
         : "bg-rose-50 hover:bg-rose-100 border-rose-200";
 
-  if (!wp) return null;
+  if (!wp && !isRouteMode) return null;
 
   // Detail view for a selected POI
   if (selectedPOI) {
@@ -232,7 +313,7 @@ export function WaypointExplorePanel() {
     const alreadyAdded = isInRoute(selectedPOI);
 
     return (
-      <div className="absolute top-3 left-3 right-3 sm:left-auto sm:right-14 sm:w-[360px] sm:max-w-[360px] z-[100] max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
+      <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 sm:top-3 sm:left-auto sm:right-14 sm:w-[360px] sm:max-w-[360px] z-[100] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
         {/* Header */}
         <div className="flex items-center gap-2 p-3 border-b shrink-0">
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleBack}>
@@ -350,7 +431,7 @@ export function WaypointExplorePanel() {
     const color = tabColor(tab);
 
     return (
-      <div className="absolute top-3 left-3 right-3 sm:left-auto sm:right-14 sm:w-[360px] sm:max-w-[360px] z-[100] max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
+      <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 sm:top-3 sm:left-auto sm:right-14 sm:w-[360px] sm:max-w-[360px] z-[100] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
         {/* Header */}
         <div className="flex items-center gap-2 p-3 border-b shrink-0">
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleBack}>
@@ -363,7 +444,11 @@ export function WaypointExplorePanel() {
               : tab === "stays"
                 ? "Stays"
                 : "Food & Dining"}{" "}
-            near {wp.name.split(",")[0]}
+            near {(isRouteMode || (tab === "attractions" && hasGeneratedRoute))
+              ? "your route"
+              : wp
+                ? wp.name.split(",")[0]
+                : ""}
           </span>
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleClose}>
             <X className="h-4 w-4" />
@@ -422,7 +507,7 @@ export function WaypointExplorePanel() {
                       <Button
                         variant={added ? "outline" : "default"}
                         size="icon"
-                        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="h-8 w-8 sm:h-7 sm:w-7 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                         onClick={(e) => {
                           e.stopPropagation();
                           if (!added) handleAddToRoute(poi);
@@ -450,18 +535,38 @@ export function WaypointExplorePanel() {
 
   // Main menu
   return (
-    <div className="absolute top-3 left-3 right-3 sm:left-auto sm:right-14 sm:w-[320px] sm:max-w-[320px] z-[100] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
+    <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 sm:top-3 sm:left-auto sm:right-14 sm:w-[320px] sm:max-w-[320px] z-[100] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
       {/* Header */}
       <div className="flex items-center gap-3 p-4 border-b">
-        <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
-          {wp.index + 1}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold truncate">{wp.name}</p>
-          <p className="text-[10px] text-muted-foreground">
-            {wp.lat.toFixed(4)}, {wp.lng.toFixed(4)}
-          </p>
-        </div>
+        {isRouteMode ? (
+          <>
+            <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
+              R
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">Your route</p>
+              {routeCenter ? (
+                <p className="text-[10px] text-muted-foreground">
+                  {routeCenter.lat.toFixed(4)}, {routeCenter.lng.toFixed(4)}
+                </p>
+              ) : (
+                <p className="text-[10px] text-muted-foreground">Plan your itinerary</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
+              {wp ? wp.index + 1 : ""}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">{wp?.name}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {wp ? `${wp.lat.toFixed(4)}, ${wp.lng.toFixed(4)}` : ""}
+              </p>
+            </div>
+          </>
+        )}
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={handleClose}>
           <X className="h-4 w-4" />
         </Button>
@@ -495,21 +600,26 @@ export function WaypointExplorePanel() {
         ))}
       </div>
 
-      {/* Remove from route */}
-      <div className="px-4 pb-4">
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full text-red-500 hover:text-red-600 hover:bg-red-50"
-          onClick={() => {
-            removeWaypoint(wp.id);
-            handleClose();
-          }}
-        >
-          <X className="h-3.5 w-3.5 mr-1.5" />
-          Remove from Route
-        </Button>
-      </div>
+      {!isRouteMode && (
+        <>
+          {/* Remove from route */}
+          <div className="px-4 pb-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-red-500 hover:text-red-600 hover:bg-red-50"
+              onClick={() => {
+                if (!wp) return;
+                removeWaypoint(wp.id);
+                handleClose();
+              }}
+            >
+              <X className="h-3.5 w-3.5 mr-1.5" />
+              Remove from Route
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

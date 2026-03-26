@@ -297,7 +297,10 @@ export async function POST(req: NextRequest) {
     session?.user?.plan || "FREE"
   );
   const body = await req.json().catch(() => null);
-  const waypoints = (body?.waypoints || []) as OptimizerWaypoint[];
+  const rawWaypoints = (body?.waypoints || []) as OptimizerWaypoint[];
+  // Transit split points are synthetic output of optimization; exclude them
+  // from the next optimization input to avoid recursive splitting/id collisions.
+  const waypoints = rawWaypoints.filter((wp) => !wp.isTransitSplit);
   const fixedStart = body?.fixedStart !== false;
   const fixedEnd = body?.fixedEnd !== false;
   const travelMode = (advancedOptimizationEnabled
@@ -372,6 +375,7 @@ export async function POST(req: NextRequest) {
   const splitAwareRoute: OptimizerWaypoint[] = [];
   const autoSplitConflicts: OptimizeConflict[] = [];
   const reverseGeoCache = new Map<string, string | null>();
+  const splitBatchId = Date.now().toString(36);
   if (autoSplitLongTransfers) {
     for (let i = 0; i < refined.length; i += 1) {
       const current = refined[i];
@@ -391,7 +395,7 @@ export async function POST(req: NextRequest) {
           reverseGeoCache
         );
         splitAwareRoute.push({
-          id: `transit-${current.id || i}-${next.id || i + 1}-${segment}`,
+          id: `transit-${splitBatchId}-${current.id || i}-${next.id || i + 1}-${segment}`,
           name: realLocationName || `Between ${current.name} and ${next.name}`,
           lat: point.lat,
           lng: point.lng,
