@@ -11,6 +11,7 @@ import { POIMarkers } from "./POIMarkers";
 import { MapStyleToggle } from "./MapStyleToggle";
 import { WaypointExplorePanel } from "./WaypointExplorePanel";
 import { RouteSummaryPanel } from "./RouteSummaryPanel";
+import { MapCollaborationControls } from "./MapCollaborationControls";
 
 interface MapViewProps {
   mapboxToken: string;
@@ -125,6 +126,7 @@ export function MapView({ mapboxToken }: MapViewProps) {
         <div className="pointer-events-auto flex flex-row items-start gap-1.5 lg:flex-col">
           <MapStyleToggle />
           <RouteSummaryPanel />
+          <MapCollaborationControls />
         </div>
       </div>
       <WaypointExplorePanel />

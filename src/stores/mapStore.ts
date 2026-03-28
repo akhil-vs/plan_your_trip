@@ -30,6 +30,10 @@ interface MapState {
   routeSummaryOpen: boolean;
   pickPointsMode: boolean;
   routeExploreOpen: boolean;
+  /** Trip members sheet (from map or sidebar): list + invites only. */
+  membersSheetOpen: boolean;
+  /** Trip chat sheet (from map): messages + photos only. */
+  chatSheetOpen: boolean;
 
   setViewState: (vs: Partial<MapState["viewState"]>) => void;
   setMapStyle: (style: MapStyle) => void;
@@ -44,6 +48,8 @@ interface MapState {
   setRouteSummaryOpen: (open: boolean) => void;
   setPickPointsMode: (open: boolean) => void;
   setRouteExploreOpen: (open: boolean) => void;
+  setMembersSheetOpen: (open: boolean) => void;
+  setChatSheetOpen: (open: boolean) => void;
 }
 
 const MAP_STYLES: Record<MapStyle, string> = {
@@ -74,6 +80,8 @@ export const useMapStore = create<MapState>((set) => ({
   routeSummaryOpen: false,
   pickPointsMode: false,
   routeExploreOpen: false,
+  membersSheetOpen: false,
+  chatSheetOpen: false,
 
   setViewState: (vs) =>
     set((s) => ({ viewState: { ...s.viewState, ...vs } })),
@@ -113,5 +121,15 @@ export const useMapStore = create<MapState>((set) => ({
       pickPointsMode: routeExploreOpen ? false : s.pickPointsMode,
       activeWaypoint: routeExploreOpen ? null : s.activeWaypoint,
       routeSummaryOpen: routeExploreOpen ? false : s.routeSummaryOpen,
+    })),
+  setMembersSheetOpen: (open) =>
+    set((s) => ({
+      membersSheetOpen: open,
+      ...(open ? { chatSheetOpen: false } : {}),
+    })),
+  setChatSheetOpen: (open) =>
+    set((s) => ({
+      chatSheetOpen: open,
+      ...(open ? { membersSheetOpen: false } : {}),
     })),
 }));

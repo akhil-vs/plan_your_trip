@@ -93,7 +93,7 @@ let waypointCounter = 0;
 
 const initialState = {
   tripId: null,
-  tripName: "Untitled Trip",
+  tripName: "",
   waypoints: [] as WaypointData[],
   route: null,
   attractions: [] as POI[],

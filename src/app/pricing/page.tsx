@@ -67,7 +67,7 @@ export default function PricingPage() {
             Pay for depth when your trip needs it
           </h1>
           <p className="text-gray-600 mt-3 text-pretty text-base sm:text-lg">
-            Free covers solo planning on the map; Pro and Team add collaboration, exports, and controls when your
+            Free covers solo planning in the planner; Pro and Team add collaboration, exports, and controls when your
             group—or your standards—grow.
           </p>
         </div>

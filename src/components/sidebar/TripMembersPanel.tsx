@@ -119,7 +119,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-4">
       <div className="space-y-2">
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Members
@@ -136,27 +136,29 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
             {members.map((member) => (
               <div
                 key={member.id}
-                className="rounded border px-2 py-1.5 flex items-center gap-2"
+                className="flex flex-wrap items-start gap-x-2 gap-y-1.5 rounded border px-2 py-2 sm:items-center sm:justify-between"
               >
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium truncate">{member.user.name}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">
+                <div className="min-w-0 flex-1 basis-[min(100%,14rem)]">
+                  <p className="text-xs font-medium break-words">{member.user.name}</p>
+                  <p className="text-[11px] text-muted-foreground break-all">
                     {member.user.email}
                   </p>
                 </div>
-                <Badge variant="secondary" className="text-[10px]">
-                  {member.role}
-                </Badge>
-                {canManage && member.role !== "OWNER" && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-red-500"
-                    onClick={() => removeMember(member.user.id)}
-                  >
-                    <UserX className="h-3.5 w-3.5" />
-                  </Button>
-                )}
+                <div className="flex shrink-0 items-center gap-1.5 self-start sm:self-center">
+                  <Badge variant="secondary" className="text-[10px]">
+                    {member.role}
+                  </Badge>
+                  {canManage && member.role !== "OWNER" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-red-500"
+                      onClick={() => removeMember(member.user.id)}
+                    >
+                      <UserX className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -205,31 +207,35 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
             .map((invite) => (
               <div
                 key={invite.id}
-                className="rounded border px-2 py-1.5 flex items-center gap-2"
+                className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded border px-2 py-2"
               >
-                <p className="text-xs flex-1 truncate">{invite.email}</p>
-                <Badge variant="outline" className="text-[10px]">
-                  {invite.role}
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => copyInviteLink(invite)}
-                  title="Copy invite link"
-                >
-                  <Link2 className="h-3.5 w-3.5" />
-                </Button>
-                {canManage && (
+                <p className="min-w-0 flex-1 basis-[min(100%,12rem)] break-all text-xs">
+                  {invite.email}
+                </p>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Badge variant="outline" className="text-[10px]">
+                    {invite.role}
+                  </Badge>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-red-500"
-                    onClick={() => revokeInvite(invite.id)}
+                    className="h-7 w-7"
+                    onClick={() => copyInviteLink(invite)}
+                    title="Copy invite link"
                   >
-                    <UserX className="h-3.5 w-3.5" />
+                    <Link2 className="h-3.5 w-3.5" />
                   </Button>
-                )}
+                  {canManage && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-red-500"
+                      onClick={() => revokeInvite(invite.id)}
+                    >
+                      <UserX className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
               </div>
             ))
         )}

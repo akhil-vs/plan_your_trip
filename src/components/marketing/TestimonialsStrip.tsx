@@ -18,7 +18,7 @@ const items: Array<{
   },
   {
     quote:
-      "The route optimizer saved us hours. We reshuffled stops and the map updated instantly — exactly what we needed for Japan.",
+      "The route optimizer saved us hours. We reshuffled stops and the plan stayed in sync — exactly what we needed for Japan.",
     name: "James Okonkwo",
     role: "Solo traveler",
     featured: true,

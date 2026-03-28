@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Viazo",
     short_name: "Viazo",
     description:
-      "Travel route planner with interactive maps, itineraries, and collaboration.",
+      "Travel route planner for itineraries, routes, and collaboration.",
     start_url: "/",
     display: "standalone",
     background_color: "#ffffff",

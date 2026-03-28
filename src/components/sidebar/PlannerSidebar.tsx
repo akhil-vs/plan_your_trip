@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useMapStore } from "@/stores/mapStore";
 import { useTripStore, WaypointData } from "@/stores/tripStore";
 import { getDirections, optimizeWaypoints } from "@/lib/api/mapbox";
@@ -9,6 +10,7 @@ import { WaypointList } from "./WaypointList";
 import { FilterPanel } from "./FilterPanel";
 import { PlaceDetailPanel } from "./PlaceDetailPanel";
 import { TripMembersPanel } from "./TripMembersPanel";
+import { TripMemberChat } from "./TripMemberChat";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +27,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import Link from "next/link";
 import {
   MapPin,
@@ -44,11 +54,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Users,
+  MessageCircle,
   FileDown,
   Globe,
   History,
   Compass,
   X,
+  Trash2,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import {
@@ -114,6 +126,9 @@ interface StarterTemplate {
   waypoints: Array<{ name: string; lat: number; lng: number }>;
 }
 
+/** Shown in the save-name dialog when the user has not entered a title yet. */
+const DEFAULT_SAVE_NAME = "Untitled";
+
 const STARTER_TEMPLATES: StarterTemplate[] = [
   {
     id: "city-weekend",
@@ -150,6 +165,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     pickPointsMode,
     setPickPointsMode,
     setRouteExploreOpen,
+    setRouteSummaryOpen,
+    setActiveWaypoint,
+    membersSheetOpen,
+    setMembersSheetOpen,
+    chatSheetOpen,
+    setChatSheetOpen,
   } = useMapStore();
   const {
     tripId: activeTripId,
@@ -199,13 +220,18 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const [tripStatus, setTripStatus] = useState<TripStatus>("DRAFT");
   const [isPublic, setIsPublic] = useState(false);
   const [memberCount, setMemberCount] = useState(1);
-  const [membersOpen, setMembersOpen] = useState(false);
   const [advancedActionsOpen, setAdvancedActionsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityEvents, setActivityEvents] = useState<TripTimelineEvent[]>([]);
   const [showOnboardingCard, setShowOnboardingCard] = useState(false);
+  const [saveNameDialogOpen, setSaveNameDialogOpen] = useState(false);
+  const [saveNameInput, setSaveNameInput] = useState(DEFAULT_SAVE_NAME);
+  const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
+  const [deleteTripDialogOpen, setDeleteTripDialogOpen] = useState(false);
+  const [deletingTrip, setDeletingTrip] = useState(false);
   const lastEventAtRef = useRef(0);
+  const router = useRouter();
 
   const canEditTrip =
     (currentUserRole === "OWNER" || currentUserRole === "EDITOR") &&
@@ -214,6 +240,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const collaborationEnabled = canUseCollaboration(userPlan);
   const timelineEnabled = canUseActivityTimeline(userPlan);
   const effectiveTripId = tripId ?? activeTripId;
+
   const lifecycleStage: LifecycleStage = useMemo(() => {
     if (tripStatus === "FINALIZED" && isPublic) return "SHARED";
     if (tripStatus === "FINALIZED") return "FINALIZED";
@@ -232,7 +259,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     DRAFT: "Add key stops and save your first draft.",
     PLANNING: "Review day-by-day details, then finalize your itinerary.",
     FINALIZED: "Your itinerary is ready to publish and share.",
-    SHARED: "Your shared itinerary is live for collaborators and viewers.",
+    SHARED: "Your shared itinerary is available to collaborators and viewers.",
   };
 
   const getCollabToastMessage = (
@@ -498,10 +525,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   );
 
   const hasUnsavedChanges = useMemo(() => {
-    if (!effectiveTripId) return waypoints.length > 0;
+    // URL `/planner` only: draft exists if there are stops (avoid stale activeTripId from store).
+    if (!tripId) return waypoints.length > 0;
     if (!lastSavedSignature) return true;
     return currentSaveSignature !== lastSavedSignature;
-  }, [effectiveTripId, waypoints.length, currentSaveSignature, lastSavedSignature]);
+  }, [tripId, waypoints.length, currentSaveSignature, lastSavedSignature]);
 
   const formatMinutes = (minutes: number) => {
     const hrs = Math.floor(minutes / 60);
@@ -658,32 +686,42 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     }
   }, [tripId, waypoints.length]);
 
+  const resetNewTripPlanner = useCallback(() => {
+    resetTrip();
+    setTripId(null);
+    setShowDayPlanner(false);
+    setDayStartMinutes(9 * 60);
+    setDayEndMinutes(20 * 60);
+    setDefaultVisitMinutes(60);
+    setOptimizeDays([]);
+    setOptimizeSummary("");
+    setOptimizationConflicts([]);
+    setOptimizationHistory([]);
+    setOptimizationBaseline(null);
+    setLastSavedSignature(null);
+  }, [
+    resetTrip,
+    setTripId,
+    setDayStartMinutes,
+    setDayEndMinutes,
+    setDefaultVisitMinutes,
+  ]);
+
   // New trip: reset store. Existing trip: load data
   useEffect(() => {
     if (!tripId) {
-      resetTrip();
-      setTripId(null);
-      setShowDayPlanner(false);
-      setDayStartMinutes(9 * 60);
-      setDayEndMinutes(20 * 60);
-      setDefaultVisitMinutes(60);
-      setOptimizeDays([]);
-      setOptimizeSummary("");
-      setOptimizationConflicts([]);
-      setOptimizationHistory([]);
-      setOptimizationBaseline(null);
-      setLastSavedSignature(null);
+      resetNewTripPlanner();
       return;
     }
     setTripId(tripId);
     fetch(`/api/trips/${tripId}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.name) setTripName(data.name);
+        const loadedTripName = typeof data.name === "string" ? data.name : "";
         if (data.waypoints) {
           resetTrip();
           setTripId(tripId);
-          setTripName(data.name);
+          setTripName(loadedTripName);
           if (typeof data.optimizerDayStartMinutes === "number") {
             setDayStartMinutes(data.optimizerDayStartMinutes);
           }
@@ -818,7 +856,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           setOptimizeDays(normalizedLoadedDayPlans);
           setLastSavedSignature(
             createSaveSignature({
-              name: data.name || "Untitled Trip",
+              name: loadedTripName.trim() ? loadedTripName : DEFAULT_SAVE_NAME,
               waypoints: loadedWaypoints.map(
                 (wp: {
                   name: string;
@@ -868,16 +906,18 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setDayStartMinutes,
     setDayEndMinutes,
     setDefaultVisitMinutes,
+    resetNewTripPlanner,
   ]);
 
-  const handleSave = async () => {
+  const performSave = async (resolvedName: string) => {
     if (!session?.user || !canEditTrip) return;
+    const nameToPersist = resolvedName.trim() || DEFAULT_SAVE_NAME;
     setSaving(true);
     setSaved(false);
     setSaveError("");
     try {
       const body = {
-        name: tripName,
+        name: nameToPersist,
         waypoints: waypoints.map((w) => ({
           id: w.id,
           name: w.name,
@@ -919,10 +959,27 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       if (res.ok) {
         const data = await res.json();
         setTripId(data.id);
+        if (!tripId && typeof data.id === "string") {
+          router.replace(`/planner/${data.id}`);
+        }
+        setTripName(
+          typeof data.name === "string" && data.name.trim()
+            ? data.name.trim()
+            : nameToPersist
+        );
         if (data.currentUserRole) setCurrentUserRole(data.currentUserRole as TripRole);
         if (data.status) setTripStatus(data.status as TripStatus);
         setIsPublic(Boolean(data.isPublic));
-        setLastSavedSignature(currentSaveSignature);
+        setLastSavedSignature(
+          createSaveSignature({
+            name: nameToPersist,
+            waypoints,
+            dayPlans: optimizeDays,
+            dayStartMinutes,
+            dayEndMinutes,
+            defaultVisitMinutes,
+          })
+        );
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
       } else {
@@ -935,6 +992,58 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       setTimeout(() => setSaveError(""), 4000);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!session?.user || !canEditTrip) return;
+    if (!tripName.trim()) {
+      setSaveNameInput(DEFAULT_SAVE_NAME);
+      setSaveNameDialogOpen(true);
+      return;
+    }
+    await performSave(tripName.trim());
+  };
+
+  const confirmSaveWithChosenName = async () => {
+    const resolved = saveNameInput.trim() || DEFAULT_SAVE_NAME;
+    setTripName(resolved);
+    setSaveNameDialogOpen(false);
+    await performSave(resolved);
+  };
+
+  const handleConfirmDiscardDraft = () => {
+    setDiscardDraftDialogOpen(false);
+    setEditingName(false);
+    setAdvancedActionsOpen(false);
+    setSelectedPOI(null);
+    setActiveWaypoint(null);
+    setRouteSummaryOpen(false);
+    setPickPointsMode(false);
+    setRouteExploreOpen(false);
+    setMembersSheetOpen(false);
+    setChatSheetOpen(false);
+    resetNewTripPlanner();
+    toast.success("Draft discarded.");
+    router.replace("/dashboard");
+  };
+
+  const handleConfirmDeleteTrip = async () => {
+    const currentTripId = useTripStore.getState().tripId;
+    if (!currentTripId || !canManageTrip) return;
+    setDeletingTrip(true);
+    try {
+      const res = await fetch(`/api/trips/${currentTripId}`, { method: "DELETE" });
+      if (res.ok) {
+        setDeleteTripDialogOpen(false);
+        resetNewTripPlanner();
+        router.push("/dashboard");
+      } else {
+        const err = await res.json().catch(() => null);
+        toast.error(typeof err?.error === "string" ? err.error : "Could not delete itinerary");
+      }
+    } finally {
+      setDeletingTrip(false);
     }
   };
 
@@ -1314,8 +1423,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   setEditingName(true);
                 }}
               >
-                {tripName}
-                <Pencil className="h-3 w-3 text-gray-400" />
+                {tripName.trim() ? (
+                  tripName
+                ) : (
+                  <span className="text-muted-foreground font-medium">Name your trip</span>
+                )}
+                <Pencil className="h-3 w-3 shrink-0 text-gray-400" />
               </button>
             )}
           </div>
@@ -1345,7 +1458,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                 {lifecycleHintByStage[lifecycleStage]}
               </p>
             <div className="flex flex-wrap items-center gap-2">
-                {!effectiveTripId ? (
+                {!tripId ? (
                   <Button
                     onClick={handleSave}
                     disabled={saving || waypoints.length === 0 || !canEditTrip || !hasUnsavedChanges}
@@ -1459,12 +1572,23 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      setMembersOpen(true);
+                      setMembersSheetOpen(true);
                     }}
                     className="gap-1.5"
                   >
                     <Users className="h-4 w-4" />
                     Members
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setChatSheetOpen(true);
+                    }}
+                    className="gap-1.5"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    Chat
                   </Button>
                   <Button
                     size="sm"
@@ -1489,6 +1613,30 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                     <Sparkles className="h-4 w-4" />
                     Regenerate day plan
                   </Button>
+                  {!tripId && waypoints.length > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-destructive border-destructive/35 hover:bg-destructive/10 sm:col-span-2"
+                      onClick={() => setDiscardDraftDialogOpen(true)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Discard draft
+                    </Button>
+                  )}
+                  {tripId && canManageTrip && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-destructive border-destructive/35 hover:bg-destructive/10 sm:col-span-2"
+                      onClick={() => setDeleteTripDialogOpen(true)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete itinerary
+                    </Button>
+                  )}
                   {canManageTrip && (
                     <>
                       <Button
@@ -1960,18 +2108,21 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </div>
         </SheetContent>
       </Sheet>
-      <Sheet open={membersOpen} onOpenChange={setMembersOpen}>
-        <SheetContent side="right" className="sm:max-w-md w-[96vw] sm:w-[90vw]">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <Users className="h-4 w-4" />
+      <Sheet open={membersSheetOpen} onOpenChange={setMembersSheetOpen}>
+        <SheetContent
+          side="right"
+          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
+        >
+          <SheetHeader className="shrink-0 space-y-1 border-b px-4 py-3 pr-12 text-left">
+            <SheetTitle className="flex items-center gap-2 text-base leading-snug">
+              <Users className="h-4 w-4 shrink-0" />
               Trip Members
             </SheetTitle>
-            <SheetDescription>
-              Invite editors/viewers and manage collaboration access.
+            <SheetDescription className="text-left text-xs sm:text-sm">
+              Invite editors and viewers to this itinerary—Pro and Team plans.
             </SheetDescription>
           </SheetHeader>
-          <div className="px-4 pb-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
             {!collaborationEnabled ? (
               <p className="text-xs text-muted-foreground">
                 Collaboration is available on Pro and Team plans.
@@ -1986,18 +2137,50 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </div>
         </SheetContent>
       </Sheet>
+      <Sheet open={chatSheetOpen} onOpenChange={setChatSheetOpen}>
+        <SheetContent
+          side="right"
+          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
+        >
+          <SheetHeader className="shrink-0 space-y-1 border-b px-4 py-3 pr-12 text-left">
+            <SheetTitle className="flex items-center gap-2 text-base leading-snug">
+              <MessageCircle className="h-4 w-4 shrink-0" />
+              Trip chat
+            </SheetTitle>
+            <SheetDescription className="text-left text-xs sm:text-sm">
+              Message the group and share photos—Pro and Team plans.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
+            {!collaborationEnabled ? (
+              <p className="text-xs text-muted-foreground">
+                Collaboration is available on Pro and Team plans.
+              </p>
+            ) : effectiveTripId ? (
+              <TripMemberChat tripId={effectiveTripId} />
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Save the itinerary first to use trip chat.
+              </p>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
       <Sheet open={activityOpen} onOpenChange={setActivityOpen}>
-        <SheetContent side="right" className="sm:max-w-md w-[96vw] sm:w-[90vw]">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <History className="h-4 w-4" />
+        <SheetContent
+          side="right"
+          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
+        >
+          <SheetHeader className="shrink-0 space-y-1 border-b px-4 py-3 pr-12 text-left">
+            <SheetTitle className="flex items-center gap-2 text-base leading-snug">
+              <History className="h-4 w-4 shrink-0" />
               Activity Timeline
             </SheetTitle>
-            <SheetDescription>
+            <SheetDescription className="text-left text-xs sm:text-sm">
               Recent collaboration updates with clear attribution.
             </SheetDescription>
           </SheetHeader>
-          <div className="px-4 pb-4 pt-2">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
             {!timelineEnabled ? (
               <p className="text-xs text-muted-foreground">
                 Activity timeline is available on Pro and Team plans.
@@ -2009,7 +2192,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                 No activity yet. Changes will appear here in real time.
               </p>
             ) : (
-              <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+              <div className="space-y-2 pr-1">
                 {activityEvents.map((evt) => (
                   <div key={evt.id} className="rounded-md border p-2">
                     <p className="text-xs text-foreground">{formatEventMessage(evt)}</p>
@@ -2024,6 +2207,102 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         </SheetContent>
       </Sheet>
     </div>
+    <Dialog open={saveNameDialogOpen} onOpenChange={setSaveNameDialogOpen}>
+      <DialogContent showCloseButton>
+        <DialogHeader>
+          <DialogTitle>Name your itinerary</DialogTitle>
+          <DialogDescription>
+            You haven&apos;t set a title yet. It will be saved with the name below—change it if you like.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          value={saveNameInput}
+          onChange={(e) => setSaveNameInput(e.target.value)}
+          placeholder={DEFAULT_SAVE_NAME}
+          className="h-9"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void confirmSaveWithChosenName();
+            }
+          }}
+        />
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setSaveNameDialogOpen(false)}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button type="button" onClick={() => void confirmSaveWithChosenName()} disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                Saving…
+              </>
+            ) : (
+              "Save itinerary"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={discardDraftDialogOpen} onOpenChange={setDiscardDraftDialogOpen}>
+      <DialogContent showCloseButton>
+        <DialogHeader>
+          <DialogTitle>Discard this draft?</DialogTitle>
+          <DialogDescription>
+            All stops on this unsaved itinerary will be removed. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setDiscardDraftDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="button" variant="destructive" onClick={handleConfirmDiscardDraft}>
+            Discard draft
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={deleteTripDialogOpen} onOpenChange={setDeleteTripDialogOpen}>
+      <DialogContent showCloseButton>
+        <DialogHeader>
+          <DialogTitle>Delete this itinerary?</DialogTitle>
+          <DialogDescription>
+            This permanently deletes the saved itinerary for everyone. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setDeleteTripDialogOpen(false)}
+            disabled={deletingTrip}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void handleConfirmDeleteTrip()}
+            disabled={deletingTrip}
+          >
+            {deletingTrip ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                Deleting…
+              </>
+            ) : (
+              "Delete itinerary"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

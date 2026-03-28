@@ -9,44 +9,42 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [myTrips, publicTrips] = await Promise.all([
-    prisma.trip.findMany({
-      where: {
-        OR: [
-          { userId: session.user.id },
-          { members: { some: { userId: session.user.id } } },
-        ],
+  // Itineraries this user owns or is invited to (never includes other users' private trips).
+  const myTrips = await prisma.trip.findMany({
+    where: {
+      OR: [
+        { userId: session.user.id },
+        { members: { some: { userId: session.user.id } } },
+      ],
+    },
+    include: {
+      waypoints: { orderBy: { order: "asc" } },
+      dayPlans: { orderBy: { day: "asc" } },
+      _count: { select: { savedPlaces: true, members: true } },
+      members: {
+        where: { userId: session.user.id },
+        select: { role: true },
       },
-      include: {
-        waypoints: { orderBy: { order: "asc" } },
-        dayPlans: { orderBy: { day: "asc" } },
-        _count: { select: { savedPlaces: true, members: true } },
-        members: {
-          where: { userId: session.user.id },
-          select: { role: true },
-        },
-      },
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.trip.findMany({
-      where: {
-        isPublic: true,
-        NOT: {
-          OR: [
-            { userId: session.user.id },
-            { members: { some: { userId: session.user.id } } },
-          ],
-        },
-      },
-      include: {
-        waypoints: { orderBy: { order: "asc" } },
-        _count: { select: { members: true, savedPlaces: true } },
-        user: { select: { id: true, name: true } },
-      },
-      orderBy: { updatedAt: "desc" },
-      take: 24,
-    }),
-  ]);
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const myTripIds = myTrips.map((t) => t.id);
+
+  // Community published feed: all public itineraries except ones already listed above (no duplicate cards).
+  const publicTrips = await prisma.trip.findMany({
+    where: {
+      isPublic: true,
+      ...(myTripIds.length > 0 ? { id: { notIn: myTripIds } } : {}),
+    },
+    include: {
+      waypoints: { orderBy: { order: "asc" } },
+      _count: { select: { members: true, savedPlaces: true } },
+      user: { select: { id: true, name: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 48,
+  });
 
   return NextResponse.json({ myTrips, publicTrips });
 }
@@ -79,7 +77,8 @@ export async function POST(req: NextRequest) {
   try {
     const trip = await prisma.trip.create({
       data: {
-        name: name || "Untitled Trip",
+        name:
+          typeof name === "string" && name.trim().length > 0 ? name.trim() : "Untitled",
         description,
         userId: session.user.id,
         optimizerDayStartMinutes,

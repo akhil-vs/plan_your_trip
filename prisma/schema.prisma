@@ -44,6 +44,7 @@ model User {
   tripMembers   TripMember[]
   sentInvites   TripInvite[] @relation("TripInviteSender")
   templates     TripTemplate[]
+  tripChatMessages TripChatMessage[]
   createdAt     DateTime     @default(now())
 }
 
@@ -65,8 +66,24 @@ model Trip {
   waypoints                  Waypoint[]
   dayPlans                   TripDayPlan[]
   savedPlaces                SavedPlace[]
+  chatMessages               TripChatMessage[]
   createdAt                  DateTime     @default(now())
   updatedAt                  DateTime     @updatedAt
+}
+
+/// Trip-scoped chat for collaborators (text + optional image attachment).
+model TripChatMessage {
+  id        String   @id @default(cuid())
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  tripId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  body      String?  @db.Text
+  /// Data URL (base64) or https image URL; large payloads capped in API.
+  imageUrl  String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([tripId, createdAt])
 }
 
 model Waypoint {

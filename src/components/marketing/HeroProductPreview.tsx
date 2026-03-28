@@ -1,8 +1,7 @@
 import { MapPin } from "lucide-react";
 
 /**
- * CSS-only product preview (map frame + route) so the hero shows
- * the product without requiring screenshot assets.
+ * CSS-only route preview (illustrative, not a real map) for the hero.
  */
 export function HeroProductPreview() {
   return (
@@ -58,7 +57,7 @@ export function HeroProductPreview() {
           </svg>
           <div className="absolute bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-64 max-w-[calc(100%-2rem)] rounded-xl border border-white/70 bg-white/90 backdrop-blur-sm p-3 shadow-lg">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
-              Live route
+              Route preview
             </p>
             <p className="text-xs text-gray-700 mt-0.5 font-medium">
               3 stops · 24 km · ~42 min drive
@@ -66,7 +65,7 @@ export function HeroProductPreview() {
           </div>
           <div className="absolute top-4 right-4 flex items-center gap-1 rounded-lg bg-white/90 backdrop-blur-sm border border-white/80 px-2 py-1.5 shadow-md">
             <MapPin className="h-3.5 w-3.5 text-blue-600" />
-            <span className="text-[11px] font-medium text-gray-800">Interactive map</span>
+            <span className="text-[11px] font-medium text-gray-800">Trip overview</span>
           </div>
         </div>
       </div>

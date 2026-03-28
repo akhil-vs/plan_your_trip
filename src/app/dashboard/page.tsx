@@ -78,6 +78,7 @@ interface Trip {
   createdAt: string;
   updatedAt: string;
   members?: { role: "OWNER" | "EDITOR" | "VIEWER" }[];
+  user?: { id?: string; name: string | null };
   waypoints: { id: string; name: string; lat: number; lng: number; order: number }[];
   _count: { savedPlaces: number; members?: number };
 }
@@ -335,7 +336,7 @@ export default function DashboardPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Your Itineraries</h1>
           <p className="text-muted-foreground mt-1">
-            Manage your trips and discover published itineraries from the community
+            Only itineraries you own or are invited to appear here—your private plans stay yours.
           </p>
         </div>
 
@@ -557,14 +558,14 @@ export default function DashboardPage() {
         {!loading && (
           <div>
             <div className="mb-3">
-              <h2 className="text-lg font-semibold text-gray-900">Published Trips</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Published itineraries</h2>
               <p className="text-sm text-muted-foreground">
-                Public itineraries shared by other travelers
+                Anyone can open these read-only plans. Yours also appear under Your Itineraries above.
               </p>
             </div>
             {publicTrips.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No published trips available right now.
+                No other published itineraries yet. Publish a trip (make it public) to share it with everyone.
               </p>
             ) : (
               <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
@@ -584,6 +585,9 @@ export default function DashboardPage() {
                             {trip._count.members ?? 1}
                           </Badge>
                         </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          By {trip.user?.name?.trim() || "A traveler"}
+                        </p>
                         <CardDescription className="mt-1 line-clamp-2">
                           {trip.description || "Community-shared itinerary"}
                         </CardDescription>

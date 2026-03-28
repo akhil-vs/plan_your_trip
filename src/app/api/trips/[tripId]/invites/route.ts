@@ -93,7 +93,7 @@ export async function POST(
   const emailResult = await sendTripInviteEmail({
     inviteeEmail: email,
     inviterName: session.user.name || session.user.email || "A collaborator",
-    tripName: trip?.name || "Untitled Itinerary",
+    tripName: trip?.name?.trim() || "Untitled",
     role,
     acceptUrl,
   });

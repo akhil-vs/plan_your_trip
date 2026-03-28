@@ -92,7 +92,7 @@ export function HomeLanding() {
               </FadeIn>
               <FadeIn delay={0.1}>
                 <p className="text-base sm:text-lg text-gray-600 max-w-2xl lg:max-w-none mx-auto lg:mx-0 mb-8 sm:mb-10 text-pretty">
-                  Lay out sights, meals, and stays on a live map, invite the people who travel with you, and keep one
+                  Lay out sights, meals, and stops along your route, invite the people who travel with you, and keep one
                   plan everyone trusts—so when you look back, the path still feels as vivid as the moments along it.
                 </p>
               </FadeIn>
@@ -326,8 +326,8 @@ export function HomeLanding() {
                 </h2>
                 <p className="text-base sm:text-lg text-white/95 mb-8 text-pretty">
                   {isAuthed
-                    ? "Jump back to your trips or start routing a new plan on the map."
-                    : "Create an account in a minute—no credit card to sketch your first route and see it on the map."}
+                    ? "Jump back to your trips or start a new itinerary in the planner."
+                    : "Create an account in a minute—no credit card to sketch your first route and stops in the planner."}
                 </p>
                 {status === "loading" ? (
                   <div className="mx-auto h-14 max-w-xs rounded-lg bg-white/30 animate-pulse sm:max-w-sm" />
