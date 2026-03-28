@@ -64,6 +64,7 @@ import {
   Shield,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { useAdminAccess } from "@/contexts/AdminAccessContext";
 import {
   canUseActivityTimeline,
   canUseCollaboration,
@@ -189,6 +190,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     updateWaypoint,
   } = useTripStore();
   const { data: session } = useSession();
+  const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
   const userPlan = session?.user?.plan || "FREE";
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1333,7 +1335,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           >
             <Home className="h-5 w-5" aria-hidden />
           </Link>
-          {session?.user?.isAdmin && (
+          {adminReady && isAdminUser && (
             <Link
               href="/admin"
               className="p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center text-amber-700"
@@ -1397,7 +1399,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             >
               <Home className="h-5 w-5" />
             </Link>
-            {session?.user?.isAdmin && (
+            {adminReady && isAdminUser && (
               <Link
                 href="/admin"
                 className="shrink-0 p-1.5 rounded-md hover:bg-gray-100 text-amber-700 hover:text-amber-800 transition-colors"

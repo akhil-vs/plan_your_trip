@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useAdminAccess } from "@/contexts/AdminAccessContext";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,7 +86,8 @@ interface AdminStats {
 }
 
 export default function AdminPage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
+  const { isAdmin, ready: adminReady } = useAdminAccess();
   const router = useRouter();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [statsData, setStatsData] = useState<AdminStats | null>(null);
@@ -113,8 +115,8 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    if (!session?.user) return;
-    if (!session.user.isAdmin) {
+    if (!adminReady || status !== "authenticated") return;
+    if (!isAdmin) {
       router.replace("/dashboard");
       return;
     }
@@ -124,7 +126,7 @@ export default function AdminPage() {
         setStatsData(null);
       })
       .finally(() => setLoading(false));
-  }, [session, router, rangeDays]);
+  }, [adminReady, isAdmin, status, router, rangeDays]);
 
   const stats = useMemo(() => {
     return users.reduce(
@@ -206,11 +208,11 @@ export default function AdminPage() {
     URL.revokeObjectURL(url);
   };
 
-  if (status === "loading" || loading) {
+  if (status === "loading" || (status === "authenticated" && !adminReady) || loading) {
     return <div className="min-h-screen bg-gray-50 p-6">Loading admin panel...</div>;
   }
 
-  if (!session?.user?.isAdmin) return null;
+  if (!isAdmin) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">

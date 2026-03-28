@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useAdminAccess } from "@/contexts/AdminAccessContext";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,7 @@ const PLAN_FEATURES: Record<Plan, string[]> = {
 
 export default function ProfilePage() {
   const { data: session, status, update } = useSession();
+  const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
   const router = useRouter();
   const [plan, setPlan] = useState<Plan>("FREE");
   const [savingPlan, setSavingPlan] = useState<Plan | null>(null);
@@ -114,7 +116,7 @@ export default function ProfilePage() {
           </CardContent>
         </Card>
 
-        {session?.user?.isAdmin && (
+        {adminReady && isAdminUser && (
           <Card>
             <CardHeader>
               <CardTitle>Admin tools</CardTitle>

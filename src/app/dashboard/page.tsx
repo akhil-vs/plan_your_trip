@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
+import { useAdminAccess } from "@/contexts/AdminAccessContext";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -93,6 +94,7 @@ interface TripTemplate {
 
 export default function DashboardPage() {
   const { data: session } = useSession();
+  const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
   const router = useRouter();
   const [myTrips, setMyTrips] = useState<Trip[]>([]);
   const [publicTrips, setPublicTrips] = useState<Trip[]>([]);
@@ -311,7 +313,7 @@ export default function DashboardPage() {
                   <User className="h-4 w-4 mr-2" />
                   Profile & membership
                 </DropdownMenuItem>
-                {session?.user?.isAdmin && (
+                {adminReady && isAdminUser && (
                   <DropdownMenuItem onClick={() => router.push("/admin")}>
                     <Shield className="h-4 w-4 mr-2" />
                     Admin panel

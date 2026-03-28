@@ -87,9 +87,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id as string;
+        const id = (token.id ?? token.sub) as string | undefined;
+        if (id) session.user.id = id;
+        const email =
+          (typeof token.email === "string" && token.email) ||
+          (typeof session.user.email === "string" && session.user.email) ||
+          "";
+        if (email) session.user.email = email;
         session.user.plan = (token.plan as "FREE" | "PRO" | "TEAM" | undefined) || "FREE";
-        session.user.isAdmin = Boolean(token.isAdmin);
+        session.user.isAdmin = email ? isAdminEmail(email) : Boolean(token.isAdmin);
       }
       return session;
     },
