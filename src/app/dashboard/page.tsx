@@ -24,6 +24,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Logo } from "@/components/ui/Logo";
+import { TripCardHeaderImage } from "@/components/dashboard/TripCardHeaderImage";
 import { toast } from "@/lib/toast";
 import {
   MapPin,
@@ -429,10 +430,11 @@ export default function DashboardPage() {
             {myTrips.map((trip) => (
               <Card
                 key={trip.id}
-                className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden"
+                className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden flex flex-col p-0 gap-0"
                 onClick={() => router.push(`/planner/${trip.id}`)}
               >
-                <CardHeader className="pb-3">
+                <TripCardHeaderImage waypoints={trip.waypoints} label={trip.name} />
+                <CardHeader className="pb-3 px-4 sm:px-6 pt-4">
                   <div className="flex items-start justify-between">
                     <div className="min-w-0 flex-1">
                       <CardTitle className="text-lg truncate">
@@ -530,7 +532,7 @@ export default function DashboardPage() {
                     </DropdownMenu>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="px-4 sm:px-6 pb-4">
                   <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-muted-foreground">
                     <div className="flex items-center gap-1">
                       <MapPin className="h-3.5 w-3.5" />
@@ -581,10 +583,11 @@ export default function DashboardPage() {
                 {publicTrips.map((trip) => (
                   <Card
                     key={trip.id}
-                    className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden"
+                    className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden flex flex-col p-0 gap-0"
                     onClick={() => router.push(`/share/${trip.shareId}`)}
                   >
-                    <CardHeader className="pb-3">
+                    <TripCardHeaderImage waypoints={trip.waypoints} label={trip.name} />
+                    <CardHeader className="pb-3 px-4 sm:px-6 pt-4">
                       <div className="min-w-0 flex-1">
                         <CardTitle className="text-lg truncate">{trip.name}</CardTitle>
                         <div className="mt-1 flex items-center gap-1.5">
@@ -602,7 +605,7 @@ export default function DashboardPage() {
                         </CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="px-4 sm:px-6 pb-4">
                       <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-muted-foreground">
                         <div className="flex items-center gap-1">
                           <MapPin className="h-3.5 w-3.5" />

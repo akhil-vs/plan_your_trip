@@ -15,22 +15,26 @@ Add **all** of these in the Vercel dashboard:
 | `OPENTRIPMAP_API_KEY` | Your OpenTripMap key | Yes |
 | `GEOAPIFY_API_KEY` | Your Geoapify key | Yes |
 | `NEXTAUTH_SECRET` | Random 32+ char string | Yes |
-| `NEXTAUTH_URL` | `https://your-app.vercel.app` | Yes |
+| `NEXTAUTH_URL` | `https://your-app.vercel.app` (must be your live HTTPS URL) | Yes |
+| `ADMIN_EMAILS` | `you@domain.com` or `a@x.com,b@y.com` | **Required for admin UI** |
 | `DATABASE_URL` | `postgresql://...` | Yes |
 | `RESEND_API_KEY` | `re_xxxxx` | Optional* |
 | `INVITE_EMAIL_FROM` | `Viazo <team@yourdomain.com>` | Optional* |
 
 \* Needed if you want automatic collaboration invite emails. Without these, invites are still created and shareable via invite link.
 
-### Critical: NEXTAUTH_URL
+### Critical: `NEXTAUTH_URL` in production
 
-Set `NEXTAUTH_URL` to your **production URL**, e.g.:
+In **Vercel → Settings → Environment Variables**, set `NEXTAUTH_URL` to your **public HTTPS origin** (no trailing slash), e.g. `https://your-app.vercel.app` or your custom domain. It must match how users open the app. Using `http://localhost` only in Production will break auth cookies and redirects.
 
-```
-https://your-app-name.vercel.app
-```
+### Admin panel (`/admin`)
 
-Using `http://localhost:3000` in production will break auth and API behavior.
+The admin menu and `/api/admin/*` routes only work if:
+
+1. **`ADMIN_EMAILS`** is set in the Vercel project for the **same environment** you deploy to (Production vs Preview). Use the **exact login email(s)** (comma-separated), e.g. `founder@company.com`.
+2. After adding or changing `ADMIN_EMAILS`, **redeploy** (or wait for the next deployment) so serverless functions pick up the new value.
+
+If `ADMIN_EMAILS` is missing in production, `isAdmin` is always false and the admin panel will not appear.
 
 ---
 

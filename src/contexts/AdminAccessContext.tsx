@@ -52,7 +52,10 @@ export function AdminAccessProvider({ children }: { children: React.ReactNode })
     }
 
     let cancelled = false;
-    fetch("/api/account/me")
+    fetch("/api/account/me", {
+      credentials: "same-origin",
+      cache: "no-store",
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((me: AccountMe | null) => {
         if (cancelled) return;
