@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
 import { HeroProductPreview } from "@/components/marketing/HeroProductPreview";
@@ -57,6 +58,9 @@ const features = [
 ];
 
 export function HomeLanding() {
+  const { status } = useSession();
+  const isAuthed = status === "authenticated";
+
   return (
     <div className="min-h-screen font-sans">
       <MarketingNav context="home" />
@@ -95,23 +99,49 @@ export function HomeLanding() {
               </FadeIn>
               <FadeIn delay={0.2}>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 sm:gap-4 w-full sm:w-auto max-w-sm sm:max-w-none mx-auto lg:mx-0">
-                  <Link href="/auth/register" className="w-full sm:w-auto">
-                    <Button
-                      size="lg"
-                      className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation shadow-md shadow-blue-600/20"
-                    >
-                      Start planning
-                    </Button>
-                  </Link>
-                  <Link href="/auth/login" className="w-full sm:w-auto">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation border-gray-300 bg-white/80"
-                    >
-                      Sign in
-                    </Button>
-                  </Link>
+                  {status === "loading" ? (
+                    <div className="h-12 w-full max-w-xs rounded-lg bg-white/50 animate-pulse sm:max-w-[20rem]" />
+                  ) : isAuthed ? (
+                    <>
+                      <Link href="/dashboard" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation shadow-md shadow-blue-600/20"
+                        >
+                          Go to dashboard
+                        </Button>
+                      </Link>
+                      <Link href="/planner" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          variant="outline"
+                          className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation border-gray-300 bg-white/80"
+                        >
+                          Open planner
+                        </Button>
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <Link href="/auth/register" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation shadow-md shadow-blue-600/20"
+                        >
+                          Start planning
+                        </Button>
+                      </Link>
+                      <Link href="/auth/login" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          variant="outline"
+                          className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8 py-6 min-h-12 touch-manipulation border-gray-300 bg-white/80"
+                        >
+                          Sign in
+                        </Button>
+                      </Link>
+                    </>
+                  )}
                 </div>
               </FadeIn>
             </div>
@@ -293,19 +323,45 @@ export function HomeLanding() {
                   id="cta-heading"
                   className="text-2xl sm:text-3xl font-bold text-white mb-4 text-balance font-display"
                 >
-                  Ready when you are
+                  {isAuthed ? "Pick up where you left off" : "Ready when you are"}
                 </h2>
                 <p className="text-base sm:text-lg text-white/95 mb-8 text-pretty">
-                  Create an account in a minute—no credit card to sketch your first route and see it on the map.
+                  {isAuthed
+                    ? "Jump back to your trips or start routing a new plan on the map."
+                    : "Create an account in a minute—no credit card to sketch your first route and see it on the map."}
                 </p>
-                <Link href="/auth/register" className="inline-block w-full sm:w-auto">
-                  <Button
-                    size="lg"
-                    className="w-full sm:w-auto text-lg px-8 py-6 bg-white text-blue-700 hover:bg-gray-50 shadow-lg"
-                  >
-                    Create free account
-                  </Button>
-                </Link>
+                {status === "loading" ? (
+                  <div className="mx-auto h-14 max-w-xs rounded-lg bg-white/30 animate-pulse sm:max-w-sm" />
+                ) : isAuthed ? (
+                  <div className="flex flex-col sm:flex-row items-stretch justify-center gap-3 sm:gap-4 w-full sm:w-auto">
+                    <Link href="/dashboard" className="inline-block w-full sm:w-auto">
+                      <Button
+                        size="lg"
+                        className="w-full sm:w-auto text-lg px-8 py-6 bg-white text-blue-700 hover:bg-gray-50 shadow-lg"
+                      >
+                        Open dashboard
+                      </Button>
+                    </Link>
+                    <Link href="/planner" className="inline-block w-full sm:w-auto">
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        className="w-full sm:w-auto text-lg px-8 py-6 border-white/80 bg-transparent text-white hover:bg-white/10"
+                      >
+                        New itinerary
+                      </Button>
+                    </Link>
+                  </div>
+                ) : (
+                  <Link href="/auth/register" className="inline-block w-full sm:w-auto">
+                    <Button
+                      size="lg"
+                      className="w-full sm:w-auto text-lg px-8 py-6 bg-white text-blue-700 hover:bg-gray-50 shadow-lg"
+                    >
+                      Create free account
+                    </Button>
+                  </Link>
+                )}
               </div>
             </FadeIn>
           </div>

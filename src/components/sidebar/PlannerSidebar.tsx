@@ -1267,9 +1267,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       />
       <div className="w-[min(100vw,400px)] max-w-full lg:w-[380px] h-full bg-white lg:border-r flex flex-col shrink-0 relative overflow-hidden lg:relative max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:shadow-2xl max-lg:rounded-r-xl">
       {/* Header */}
-      <div className="p-4 border-b space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
+      <div className="p-3 sm:p-4 border-b space-y-3 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
             <Link
               href={session?.user ? "/dashboard" : "/"}
               className="shrink-0 p-1.5 rounded-md hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors"

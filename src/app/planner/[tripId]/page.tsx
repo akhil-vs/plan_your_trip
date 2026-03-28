@@ -26,7 +26,7 @@ export default function EditTripPage() {
   return (
     <div className="flex h-full min-h-0 w-full max-w-full overflow-hidden">
       <PlannerSidebar tripId={tripId} />
-      <div className="flex-1 relative min-w-0 min-h-0 overflow-visible">
+      <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden">
         <MapView mapboxToken={mapboxToken} />
       </div>
     </div>

@@ -19,7 +19,7 @@ export function MapStyleToggle() {
   const { mapStyle, setMapStyle } = useMapStore();
 
   return (
-    <div className="flex flex-col gap-0.5 sm:gap-1 bg-white rounded-lg shadow-lg border p-0.5 sm:p-1">
+    <div className="flex flex-row gap-0.5 lg:flex-col lg:gap-1 bg-white rounded-lg shadow-lg border p-0.5 sm:p-1">
       {styles.map((s) => (
         <Tooltip key={s.value}>
           <TooltipTrigger asChild>

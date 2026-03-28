@@ -164,6 +164,13 @@
   display: none !important;
 }
 
+/* Mobile / tablet: keep Mapbox zoom above the planner itinerary bar */
+@media (max-width: 1023px) {
+  .map-view-root .mapboxgl-ctrl-bottom-right {
+    bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/Logo";
@@ -24,10 +25,12 @@ const navLinkClass =
   "relative py-2 text-sm font-medium text-slate-700 hover:text-slate-900 transition-colors after:absolute after:bottom-0 after:left-0 after:h-0.5 after:w-0 after:bg-brand-primary after:transition-all after:duration-200 hover:after:w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 rounded-sm";
 
 export function MarketingNav({ context }: MarketingNavProps) {
+  const { status } = useSession();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
   const close = () => setOpen(false);
+  const isAuthed = status === "authenticated";
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -69,14 +72,34 @@ export function MarketingNav({ context }: MarketingNavProps) {
           <Link href="/pricing" className={cn(navLinkClass, "px-2")}>
             Pricing
           </Link>
-          <Link href="/auth/login" className={cn(navLinkClass, "px-2")}>
-            Sign in
-          </Link>
-          <Link href="/auth/register" className="ml-1">
-            <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
-              Get started
-            </Button>
-          </Link>
+          {status === "loading" ? (
+            <div
+              className="ml-1 h-9 w-[11rem] rounded-md bg-slate-200/60 animate-pulse"
+              aria-hidden
+            />
+          ) : isAuthed ? (
+            <>
+              <Link href="/dashboard" className={cn(navLinkClass, "px-2")}>
+                Dashboard
+              </Link>
+              <Link href="/planner" className="ml-1">
+                <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
+                  Open planner
+                </Button>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link href="/auth/login" className={cn(navLinkClass, "px-2")}>
+                Sign in
+              </Link>
+              <Link href="/auth/register" className="ml-1">
+                <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
+                  Get started
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
 
         <div className="flex md:hidden items-center gap-1">
@@ -106,14 +129,31 @@ export function MarketingNav({ context }: MarketingNavProps) {
                     Pricing
                   </Button>
                 </Link>
-                <Link href="/auth/login" onClick={close}>
-                  <Button variant="ghost" className="w-full justify-start h-11 text-base">
-                    Sign in
-                  </Button>
-                </Link>
-                <Link href="/auth/register" onClick={close}>
-                  <Button className="w-full h-11 text-base">Get started</Button>
-                </Link>
+                {status === "loading" ? (
+                  <div className="h-11 rounded-md bg-slate-200/60 animate-pulse" aria-hidden />
+                ) : isAuthed ? (
+                  <>
+                    <Link href="/dashboard" onClick={close}>
+                      <Button variant="ghost" className="w-full justify-start h-11 text-base">
+                        Dashboard
+                      </Button>
+                    </Link>
+                    <Link href="/planner" onClick={close}>
+                      <Button className="w-full h-11 text-base">Open planner</Button>
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <Link href="/auth/login" onClick={close}>
+                      <Button variant="ghost" className="w-full justify-start h-11 text-base">
+                        Sign in
+                      </Button>
+                    </Link>
+                    <Link href="/auth/register" onClick={close}>
+                      <Button className="w-full h-11 text-base">Get started</Button>
+                    </Link>
+                  </>
+                )}
               </nav>
             </SheetContent>
           </Sheet>

@@ -24,7 +24,7 @@ export function Toaster(props: ToasterProps) {
           error: "border-destructive/50",
         },
       }}
-      className="toaster group"
+      className="toaster group z-[200]"
       {...props}
     />
   );

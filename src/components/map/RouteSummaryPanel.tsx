@@ -54,7 +54,7 @@ export function RouteSummaryPanel() {
       </Tooltip>
 
       {routeSummaryOpen && (
-        <div className="absolute top-full right-0 mt-1.5 w-[min(calc(100vw-2rem),320px)] sm:w-[320px] bg-white rounded-xl shadow-2xl border overflow-hidden animate-in slide-in-from-right-4 duration-200">
+        <div className="fixed z-[110] left-2 right-2 top-[calc(4rem+env(safe-area-inset-top))] max-h-[min(75vh,440px)] overflow-y-auto lg:absolute lg:inset-x-auto lg:left-auto lg:right-0 lg:top-full lg:mt-1.5 lg:max-h-none lg:overflow-hidden w-auto lg:w-[min(calc(100vw-2rem),320px)] bg-white rounded-xl shadow-2xl border overflow-x-hidden animate-in slide-in-from-right-4 duration-200">
           <div className="flex items-center justify-between p-3 border-b">
             <span className="text-sm font-semibold text-blue-900 flex items-center gap-2">
               <Route className="h-4 w-4 text-blue-600" />

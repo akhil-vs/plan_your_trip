@@ -274,7 +274,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-50" aria-label="Dashboard">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-14 py-2 sm:py-0 sm:h-16 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 sm:flex-nowrap">
           <Link href="/" className="flex items-center min-w-0">
             <span className="hidden min-[361px]:block">
               <Logo size="md" />

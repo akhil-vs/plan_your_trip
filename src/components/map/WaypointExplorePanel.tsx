@@ -427,13 +427,13 @@ export function WaypointExplorePanel() {
     const alreadyAdded = isInRoute(selectedPOI);
 
     return (
-      <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 sm:top-3 sm:left-auto sm:right-14 sm:w-[360px] sm:max-w-[360px] z-[100] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
+      <div className="absolute z-[100] max-lg:top-[calc(4rem+env(safe-area-inset-top))] max-lg:left-2 max-lg:right-2 max-lg:max-h-[calc(100dvh-8.5rem)] lg:top-3 lg:left-auto lg:right-14 lg:w-[360px] lg:max-w-[360px] lg:max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col min-h-0 animate-in slide-in-from-right-full duration-200">
         {/* Header */}
-        <div className="flex items-center gap-2 p-3 border-b shrink-0">
+        <div className="flex items-center gap-2 p-3 border-b shrink-0 min-h-[3rem]">
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleBack}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <span className="text-sm font-semibold truncate flex-1">
+          <span className="text-sm font-semibold truncate flex-1 min-w-0">
             {selectedPOI.name}
           </span>
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleClose}>
@@ -545,14 +545,14 @@ export function WaypointExplorePanel() {
     const color = tabColor(tab);
 
     return (
-      <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 sm:top-3 sm:left-auto sm:right-14 sm:w-[360px] sm:max-w-[360px] z-[100] max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
+      <div className="absolute z-[100] max-lg:top-[calc(4rem+env(safe-area-inset-top))] max-lg:left-2 max-lg:right-2 max-lg:max-h-[calc(100dvh-8.5rem)] lg:top-3 lg:left-auto lg:right-14 lg:w-[360px] lg:max-w-[360px] lg:max-h-[calc(100dvh-1.5rem)] bg-white rounded-xl shadow-2xl border flex flex-col min-h-0 animate-in slide-in-from-right-full duration-200">
         {/* Header */}
-        <div className="flex items-center gap-2 p-3 border-b shrink-0">
+        <div className="flex items-center gap-2 p-3 border-b shrink-0 min-h-[3rem]">
           <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleBack}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <Icon className={`h-4 w-4 ${color} shrink-0`} />
-          <span className="text-sm font-semibold truncate flex-1">
+          <span className="text-sm font-semibold truncate flex-1 min-w-0">
             {tab === "attractions"
               ? "Attractions"
               : tab === "stays"
@@ -649,9 +649,9 @@ export function WaypointExplorePanel() {
 
   // Main menu
   return (
-    <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 right-2 sm:top-3 sm:left-auto sm:right-14 sm:w-[320px] sm:max-w-[320px] z-[100] bg-white rounded-xl shadow-2xl border flex flex-col animate-in slide-in-from-right-full duration-200">
+    <div className="absolute z-[100] max-lg:top-[calc(4rem+env(safe-area-inset-top))] max-lg:left-2 max-lg:right-2 max-lg:max-h-[calc(100dvh-8.5rem)] lg:top-3 lg:left-auto lg:right-14 lg:w-[320px] lg:max-w-[320px] lg:max-h-[calc(100dvh-1.5rem)] overflow-y-auto bg-white rounded-xl shadow-2xl border flex flex-col min-h-0 animate-in slide-in-from-right-full duration-200">
       {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b">
+      <div className="flex items-center gap-3 p-3 sm:p-4 border-b shrink-0 min-h-[3rem]">
         {isRouteMode ? (
           <>
             <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0">

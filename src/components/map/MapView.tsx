@@ -72,7 +72,7 @@ export function MapView({ mapboxToken }: MapViewProps) {
   }, [sidebarOpen]);
 
   return (
-    <div className="relative w-full h-full overflow-visible">
+    <div className="map-view-root relative w-full h-full min-h-0 overflow-hidden">
       <Map
         ref={mapRef}
         {...viewState}
@@ -106,8 +106,8 @@ export function MapView({ mapboxToken }: MapViewProps) {
         <POIMarkers type="parking" />
       </Map>
       {pickPointsMode && (
-        <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] left-2 z-[60]">
-          <div className="flex items-center gap-2 bg-white rounded-xl shadow-lg border px-3 py-2">
+        <div className="absolute z-[60] max-lg:bottom-[calc(4.75rem+env(safe-area-inset-bottom,0px))] max-lg:left-2 max-lg:right-2 max-lg:top-auto lg:top-[max(0.5rem,env(safe-area-inset-top))] lg:left-2 lg:right-auto lg:bottom-auto">
+          <div className="flex items-center gap-2 bg-white rounded-xl shadow-lg border px-3 py-2 max-lg:justify-between">
             <div className="text-xs font-semibold text-blue-700">
               Tap on the map to add a stop
             </div>
@@ -121,9 +121,11 @@ export function MapView({ mapboxToken }: MapViewProps) {
           </div>
         </div>
       )}
-      <div className="absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 sm:top-4 sm:right-4 flex flex-col gap-1.5 z-[50] max-w-[calc(100vw-1rem)]">
-        <MapStyleToggle />
-        <RouteSummaryPanel />
+      <div className="pointer-events-none absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 z-[50] flex max-w-[min(100%,calc(100vw-4.5rem))] flex-row items-start justify-end gap-1.5 sm:top-4 sm:right-4 lg:flex-col lg:max-w-[calc(100vw-1rem)]">
+        <div className="pointer-events-auto flex flex-row items-start gap-1.5 lg:flex-col">
+          <MapStyleToggle />
+          <RouteSummaryPanel />
+        </div>
       </div>
       <WaypointExplorePanel />
     </div>
