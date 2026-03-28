@@ -1,4 +1,4 @@
-# PlanYourTrip - Travel Route Planner
+# Viazo - Travel Route Planner
 
 A full-stack travel planning web application with interactive Mapbox maps, worldwide location search, route visualization, and POI discovery (attractions, restaurants, stays).
 
@@ -19,7 +19,7 @@ A full-stack travel planning web application with interactive Mapbox maps, world
 
 ## Packaging
 
-PlanYourTrip is structured around clear value ladders:
+Viazo is structured around clear value ladders:
 
 - **Free** - Solo planning, route builder, core day planning, basic export
 - **Pro** - Collaboration, activity timeline, premium PDF, advanced optimization controls
@@ -68,7 +68,7 @@ NEXTAUTH_URL=http://localhost:3000
 # Optional - enables automatic collaboration invite emails via Resend
 RESEND_API_KEY=re_xxxxx
 # Optional - must be verified in Resend for production delivery
-INVITE_EMAIL_FROM="PlanYourTrip <onboarding@resend.dev>"
+INVITE_EMAIL_FROM="Viazo <onboarding@resend.dev>"
 # PostgreSQL required (SQLite does not work on Vercel). Use Neon free tier or Docker.
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 ```
@@ -102,4 +102,4 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 5. Switch tabs to discover attractions, stays, and food near your route
 6. Adjust the search radius and travel mode as needed
 7. Save your trip to revisit later
-# PlanYourTrip
+# Viazo

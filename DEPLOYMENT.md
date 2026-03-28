@@ -18,7 +18,7 @@ Add **all** of these in the Vercel dashboard:
 | `NEXTAUTH_URL` | `https://your-app.vercel.app` | Yes |
 | `DATABASE_URL` | `postgresql://...` | Yes |
 | `RESEND_API_KEY` | `re_xxxxx` | Optional* |
-| `INVITE_EMAIL_FROM` | `PlanYourTrip <team@yourdomain.com>` | Optional* |
+| `INVITE_EMAIL_FROM` | `Viazo <team@yourdomain.com>` | Optional* |
 
 \* Needed if you want automatic collaboration invite emails. Without these, invites are still created and shareable via invite link.
 
@@ -82,7 +82,7 @@ If you switched from SQLite, use PostgreSQL locally as well:
 ```bash
 # Option 1: Docker
 docker compose up -d
-# DATABASE_URL=postgresql://postgres:postgres@localhost:5432/planyourtrip
+# DATABASE_URL=postgresql://postgres:postgres@localhost:5432/viazo
 
 # Option 2: Neon free tier - create a project at neon.tech and use its connection string
 ```

@@ -21,6 +21,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Logo } from "@/components/ui/Logo";
+import { toast } from "@/lib/toast";
 import {
   MapPin,
   Plus,
@@ -95,33 +98,61 @@ export default function DashboardPage() {
   const [templates, setTemplates] = useState<TripTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [templateLoadingId, setTemplateLoadingId] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
-    if (session?.user) {
-      fetch("/api/trips")
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch");
-          return res.json();
-        })
-        .then((data) => {
-          if (Array.isArray(data)) {
-            setMyTrips(data);
-            setPublicTrips([]);
-          } else {
-            setMyTrips(Array.isArray(data?.myTrips) ? data.myTrips : []);
-            setPublicTrips(Array.isArray(data?.publicTrips) ? data.publicTrips : []);
-          }
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
+    if (!session?.user) return;
 
-      fetch("/api/templates")
-        .then((res) => (res.ok ? res.json() : []))
-        .then((data) => setTemplates(Array.isArray(data) ? data : []))
-        .catch(() => setTemplates([]));
-    }
-  }, [session]);
+    let cancelled = false;
+
+    fetch("/api/account/me")
+      .then((res) => {
+        if (!res.ok) {
+          if (!cancelled) setLoading(false);
+          return null;
+        }
+        return res.json();
+      })
+      .then((me) => {
+        if (cancelled || me === null) return;
+        if (me.onboardingComplete === false) {
+          router.replace("/onboarding");
+          setLoading(false);
+          return;
+        }
+        return fetch("/api/trips")
+          .then((res) => {
+            if (!res.ok) throw new Error("Failed to fetch");
+            return res.json();
+          })
+          .then((data) => {
+            if (cancelled) return;
+            if (Array.isArray(data)) {
+              setMyTrips(data);
+              setPublicTrips([]);
+            } else {
+              setMyTrips(Array.isArray(data?.myTrips) ? data.myTrips : []);
+              setPublicTrips(Array.isArray(data?.publicTrips) ? data.publicTrips : []);
+            }
+            setLoading(false);
+          });
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    fetch("/api/templates")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setTemplates(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setTemplates([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, router]);
 
   const handleDelete = async (tripId: string) => {
     if (!confirm("Are you sure you want to delete this trip?")) return;
@@ -137,9 +168,13 @@ export default function DashboardPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tripId }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      toast.error("Could not save template");
+      return;
+    }
     const template = await res.json();
     setTemplates((prev) => [template, ...prev]);
+    toast.success("Saved as template");
   };
 
   const handleUseTemplate = async (templateId: string) => {
@@ -153,8 +188,6 @@ export default function DashboardPage() {
     router.push(`/planner/${trip.id}`);
   };
 
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
   const getTripShareUrl = async (tripId: string) => {
     const res = await fetch(`/api/trips/${tripId}/share`, { method: "POST" });
     if (!res.ok) throw new Error("Failed to generate share link");
@@ -164,10 +197,13 @@ export default function DashboardPage() {
 
   const handleCopyLink = async (e: React.MouseEvent, tripId: string) => {
     e.stopPropagation();
-    const url = await getTripShareUrl(tripId);
-    await navigator.clipboard.writeText(url);
-    setCopiedId(tripId);
-    setTimeout(() => setCopiedId(null), 2000);
+    try {
+      const url = await getTripShareUrl(tripId);
+      await navigator.clipboard.writeText(url);
+      toast.success("Share link copied to clipboard");
+    } catch {
+      toast.error("Could not copy link");
+    }
   };
 
   const handleShareWhatsApp = (e: React.MouseEvent, tripId: string) => {
@@ -213,8 +249,7 @@ export default function DashboardPage() {
     const res = await fetch(`/api/trips/${trip.id}/publish`, { method });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      setStatusMessage(data?.error || "Failed to update itinerary visibility");
-      setTimeout(() => setStatusMessage(""), 2500);
+      toast.error(data?.error || "Failed to update itinerary visibility");
       return;
     }
     setMyTrips((prev) =>
@@ -222,8 +257,9 @@ export default function DashboardPage() {
         item.id === trip.id ? { ...item, isPublic: Boolean(data?.isPublic) } : item
       )
     );
-    setStatusMessage(data?.isPublic ? "Itinerary is now public" : "Itinerary is now private");
-    setTimeout(() => setStatusMessage(""), 2000);
+    toast.success(
+      data?.isPublic ? "Itinerary is now public" : "Itinerary is now private"
+    );
   };
 
   const formatDate = (dateStr: string) => {
@@ -237,12 +273,14 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navbar */}
-      <nav className="bg-white border-b sticky top-0 z-50">
+      <nav className="bg-white border-b sticky top-0 z-50" aria-label="Dashboard">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
-          <Link href="/" className="flex items-center gap-2">
-            <MapPin className="h-6 w-6 text-blue-600" />
-            <span className="hidden min-[361px]:inline text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
-              PlanYourTrip
+          <Link href="/" className="flex items-center min-w-0">
+            <span className="hidden min-[361px]:block">
+              <Logo size="md" />
+            </span>
+            <span className="min-[361px]:hidden">
+              <Logo size="sm" />
             </span>
           </Link>
           <div className="flex items-center gap-2 sm:gap-3">
@@ -293,7 +331,7 @@ export default function DashboardPage() {
       </nav>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main id="main" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Your Itineraries</h1>
           <p className="text-muted-foreground mt-1">
@@ -342,42 +380,35 @@ export default function DashboardPage() {
             ))}
           </div>
         ) : myTrips.length === 0 ? (
-          <div className="text-center py-20">
-            <Route className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">
-              No trips yet
-            </h2>
-            <p className="text-muted-foreground mb-6">
-              Create your first itinerary in three guided steps
-            </p>
-            <div className="max-w-xl mx-auto mb-6 grid sm:grid-cols-3 gap-3 text-left">
+          <div className="py-8">
+            <EmptyState
+              icon={Route}
+              title="No trips yet"
+              description="Add stops on the map, build a day-by-day plan, then save or share. Start from a template or a blank itinerary."
+              action={{ label: "Create your first itinerary", href: "/planner" }}
+            />
+            <div className="max-w-xl mx-auto mt-10 grid sm:grid-cols-3 gap-3 text-left">
               <div className="rounded-lg border bg-white p-3">
                 <p className="text-xs font-semibold text-blue-700">1. Pick a starter</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xs text-slate-600 mt-1">
                   Use a quick-start template or start blank.
                 </p>
               </div>
               <div className="rounded-lg border bg-white p-3">
                 <p className="text-xs font-semibold text-blue-700">2. Add key stops</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xs text-slate-600 mt-1">
                   Add cities, attractions, and must-visit places.
                 </p>
               </div>
               <div className="rounded-lg border bg-white p-3">
                 <p className="text-xs font-semibold text-blue-700">3. Finalize & share</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="text-xs text-slate-600 mt-1">
                   Finalize your itinerary, export PDF, and invite collaborators.
                 </p>
               </div>
             </div>
-            <Link href="/planner">
-              <Button size="lg" className="gap-2">
-                <Plus className="h-5 w-5" />
-                Create Your First Itinerary
-              </Button>
-            </Link>
             {templates.length > 0 && (
-              <p className="text-xs text-muted-foreground mt-4">
+              <p className="text-xs text-slate-600 text-center mt-6">
                 You also have {templates.length} personal template
                 {templates.length !== 1 ? "s" : ""} ready above.
               </p>
@@ -435,7 +466,7 @@ export default function DashboardPage() {
                           disabled={!trip.isPublic}
                         >
                           <Share2 className="h-4 w-4 mr-2" />
-                          {copiedId === trip.id ? "Link copied" : "Copy share link"}
+                          Copy share link
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={(e) => handleShareWhatsApp(e, trip.id)}
@@ -577,18 +608,8 @@ export default function DashboardPage() {
             )}
           </div>
         )}
-      </div>
+      </main>
 
-      {copiedId && (
-        <div className="fixed bottom-4 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-6 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center pb-[max(0.625rem,env(safe-area-inset-bottom))]">
-          Share link copied to clipboard
-        </div>
-      )}
-      {statusMessage && (
-        <div className="fixed bottom-16 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-20 sm:w-auto bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 animate-in fade-in duration-200 text-center pb-[max(0.625rem,env(safe-area-inset-bottom))]">
-          {statusMessage}
-        </div>
-      )}
     </div>
   );
 }

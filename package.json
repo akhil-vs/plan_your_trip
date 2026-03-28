@@ -1,5 +1,5 @@
 {
-  "name": "plan-your-trip",
+  "name": "viazo",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -17,9 +17,12 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@prisma/client": "^6.19.2",
+    "@vercel/analytics": "^2.0.1",
+    "@vercel/speed-insights": "^2.0.0",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "framer-motion": "^12.38.0",
     "lucide-react": "^0.575.0",
     "mapbox-gl": "^3.18.1",
     "next": "16.1.6",
@@ -29,11 +32,13 @@
     "react-dom": "19.2.3",
     "react-map-gl": "^8.1.0",
     "resend": "^6.9.3",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tailwindcss/typography": "^0.5.19",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/react": "^19",

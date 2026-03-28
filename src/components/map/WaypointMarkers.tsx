@@ -37,6 +37,7 @@ export function WaypointMarkers() {
           >
             <div className="relative cursor-pointer">
               <div
+                aria-label={`Stop ${index + 1}: ${wp.name}${isActive ? ", selected" : ""}. Drag to move on the map.`}
                 className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-sm font-bold shadow-lg border-2 transition-all ${
                   isActive
                     ? "bg-blue-800 border-blue-300 scale-125"

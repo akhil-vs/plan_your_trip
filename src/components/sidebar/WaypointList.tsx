@@ -26,6 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { toast } from "@/lib/toast";
 
 function SortableWaypoint({
   wp,
@@ -37,6 +38,7 @@ function SortableWaypoint({
   disabled: boolean;
 }) {
   const removeWaypoint = useTripStore((s) => s.removeWaypoint);
+  const reorderWaypoints = useTripStore((s) => s.reorderWaypoints);
   const updateWaypoint = useTripStore((s) => s.updateWaypoint);
   const { setViewState, setActiveWaypoint, activeWaypoint } = useMapStore();
   const isActive = activeWaypoint?.id === wp.id;
@@ -56,18 +58,22 @@ function SortableWaypoint({
     >
       <div className="flex items-center gap-2">
         <button
+          type="button"
           {...attributes}
           {...listeners}
-        className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 min-w-9 min-h-9 flex items-center justify-center touch-manipulation -m-1 disabled:opacity-50"
-        disabled={disabled}
+          aria-label={`Reorder ${wp.name}`}
+          className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 min-w-9 min-h-9 flex items-center justify-center touch-manipulation -m-1 disabled:opacity-50"
+          disabled={disabled}
         >
-          <GripVertical className="h-4 w-4" />
+          <GripVertical className="h-4 w-4" aria-hidden />
         </button>
         <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
           {index + 1}
         </div>
         <button
+          type="button"
           className="flex-1 min-w-0 text-left"
+          aria-label={`Center map on ${wp.name}`}
           onClick={() =>
             setViewState({ longitude: wp.lng, latitude: wp.lat, zoom: 12 })
           }
@@ -82,6 +88,11 @@ function SortableWaypoint({
             <Button
               variant={isActive ? "secondary" : "ghost"}
               size="icon"
+              aria-label={
+                isActive
+                  ? `Clear nearby search for ${wp.name}`
+                  : `Find places near ${wp.name}`
+              }
               className="h-9 w-9 shrink-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50 touch-manipulation"
               onClick={(e) => {
                 e.stopPropagation();
@@ -94,7 +105,7 @@ function SortableWaypoint({
                 );
               }}
             >
-              <Compass className="h-3.5 w-3.5" />
+              <Compass className="h-3.5 w-3.5" aria-hidden />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="left">
@@ -104,15 +115,26 @@ function SortableWaypoint({
         <Button
           variant="ghost"
           size="icon"
+          aria-label={`Remove ${wp.name} from itinerary`}
           className="h-9 w-9 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500 touch-manipulation"
           onClick={(e) => {
             e.stopPropagation();
           if (disabled) return;
+            const snapshot = useTripStore.getState().waypoints.map((w) => ({ ...w }));
             removeWaypoint(wp.id);
+            const short =
+              wp.name.length > 48 ? `${wp.name.slice(0, 45)}…` : wp.name;
+            toast.message(`Removed “${short}”`, {
+              duration: 8000,
+              action: {
+                label: "Undo",
+                onClick: () => reorderWaypoints(snapshot),
+              },
+            });
           }}
         disabled={disabled}
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-3.5 w-3.5" aria-hidden />
         </Button>
       </div>
       <Input

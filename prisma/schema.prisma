@@ -37,6 +37,9 @@ model User {
   email         String       @unique
   passwordHash  String
   plan          SubscriptionPlan @default(FREE)
+  /// false = show first-run onboarding (set explicitly on registration)
+  onboardingComplete Boolean @default(true)
+  travelPreference   String?
   trips         Trip[]
   tripMembers   TripMember[]
   sentInvites   TripInvite[] @relation("TripInviteSender")

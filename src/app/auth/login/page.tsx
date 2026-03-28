@@ -67,7 +67,7 @@ function LoginForm() {
           <Link href="/" className="inline-flex items-center justify-center gap-2 mb-2">
             <MapPin className="h-7 w-7 sm:h-8 sm:w-8 text-blue-600" />
             <span className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
-              PlanYourTrip
+              Viazo
             </span>
           </Link>
           <CardTitle className="text-xl">Welcome back</CardTitle>

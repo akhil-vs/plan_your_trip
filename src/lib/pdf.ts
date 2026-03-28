@@ -159,7 +159,7 @@ export function buildTripItineraryPdf(input: TripPdfInput) {
     commands.push("BT");
     commands.push("/F1 9 Tf");
     commands.push(`${pageWidth - 190} ${pageHeight - 35} Td`);
-    commands.push("(PlanYourTrip Premium Itinerary) Tj");
+    commands.push("(Viazo Premium Itinerary) Tj");
     commands.push("ET");
 
     // Footer

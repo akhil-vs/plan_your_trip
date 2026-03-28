@@ -27,7 +27,7 @@ export async function sendTripInviteEmail(input: SendTripInviteEmailInput) {
   }
 
   const fromEmail =
-    process.env.INVITE_EMAIL_FROM || "PlanYourTrip <onboarding@resend.dev>";
+    process.env.INVITE_EMAIL_FROM || "Viazo <onboarding@resend.dev>";
   const resend = new Resend(apiKey);
   const safeTripName = escapeHtml(input.tripName);
   const safeInviterName = escapeHtml(input.inviterName);

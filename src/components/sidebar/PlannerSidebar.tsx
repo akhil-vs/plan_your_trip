@@ -55,6 +55,7 @@ import {
   canUseActivityTimeline,
   canUseCollaboration,
 } from "@/lib/subscription";
+import { toast } from "@/lib/toast";
 
 interface PlannerSidebarProps {
   tripId?: string;
@@ -204,7 +205,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityEvents, setActivityEvents] = useState<TripTimelineEvent[]>([]);
   const [showOnboardingCard, setShowOnboardingCard] = useState(false);
-  const [liveCollabToast, setLiveCollabToast] = useState("");
   const lastEventAtRef = useRef(0);
 
   const canEditTrip =
@@ -1163,8 +1163,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       const actorId = parsed?.actorId;
       const actorName = parsed?.payload?.actorName || parsed?.actorName;
       if (actorId && actorId !== session.user.id) {
-        setLiveCollabToast(getCollabToastMessage(parsed?.type, parsed?.payload, actorName));
-        window.setTimeout(() => setLiveCollabToast(""), 2200);
+        toast.message(getCollabToastMessage(parsed?.type, parsed?.payload, actorName), {
+          duration: 2800,
+        });
       }
       if (parsed?.id && parsed.type && parsed.createdAt) {
         const eventId = parsed.id;
@@ -1212,23 +1213,47 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   if (!sidebarOpen) {
     return (
-      <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-10 flex items-center gap-2">
-        <Link
-          href={session?.user ? "/dashboard" : "/"}
-          className="p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
-          title={session?.user ? "Dashboard" : "Home"}
+      <>
+        <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-10 flex items-center gap-2">
+          <Link
+            href={session?.user ? "/dashboard" : "/"}
+            className="p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
+            aria-label={session?.user ? "Back to dashboard" : "Back to home"}
+            title={session?.user ? "Dashboard" : "Home"}
+          >
+            <Home className="h-5 w-5" aria-hidden />
+          </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
+            aria-label="Open itinerary sidebar"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <PanelLeft className="h-5 w-5" aria-hidden />
+          </Button>
+        </div>
+        <nav
+          className="fixed bottom-0 left-0 right-0 z-[60] lg:hidden pointer-events-none"
+          aria-label="Itinerary quick access"
         >
-          <Home className="h-5 w-5" />
-        </Link>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
-          onClick={() => setSidebarOpen(true)}
-        >
-          <PanelLeft className="h-5 w-5" />
-        </Button>
-      </div>
+          <div className="pointer-events-auto mx-auto max-w-lg px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              aria-label={`Open itinerary sidebar, ${waypoints.length} ${waypoints.length === 1 ? "stop" : "stops"}`}
+              className="w-full h-12 rounded-xl border bg-white/95 shadow-lg backdrop-blur-sm text-base font-medium gap-2"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <MapPin className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
+              Itinerary
+              <span className="text-muted-foreground font-normal tabular-nums">
+                · {waypoints.length} {waypoints.length === 1 ? "stop" : "stops"}
+              </span>
+            </Button>
+          </div>
+        </nav>
+      </>
     );
   }
 
@@ -1998,11 +2023,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </div>
         </SheetContent>
       </Sheet>
-      {liveCollabToast && (
-        <div className="pointer-events-none fixed bottom-4 right-4 z-[70] rounded-md bg-gray-900/95 text-white text-xs px-3 py-2 shadow-lg">
-          {liveCollabToast}
-        </div>
-      )}
     </div>
     </>
   );
