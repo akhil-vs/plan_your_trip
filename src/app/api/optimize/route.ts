@@ -414,7 +414,9 @@ export function optimizeWaypointOrderByDurationMatrix(input: {
     new Set(input.lockedWaypointIds || []),
     getDurationSeconds
   );
-  return optimized.map((wp) => wp.id);
+  return optimized
+    .map((wp) => wp.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
 function interpolateWaypoint(
@@ -682,32 +684,30 @@ export async function POST(req: NextRequest) {
       const waypoint = optimized[i];
       let prevInDayIndex =
         currentIndexes.length > 0 ? currentIndexes[currentIndexes.length - 1] : null;
+      const prevWaypointInDay =
+        prevInDayIndex === null ? null : optimized[prevInDayIndex];
       let legMinutes =
-        prevInDayIndex === null
+        prevWaypointInDay === null
           ? 0
           : Math.max(
               1,
               Math.round(
-                ((optimized[prevInDayIndex].isTransitSplit || waypoint.isTransitSplit
-                  ? estimateLegMinutes(optimized[prevInDayIndex], waypoint, travelMode) * 60
+                ((prevWaypointInDay.isTransitSplit || waypoint.isTransitSplit
+                  ? estimateLegMinutes(prevWaypointInDay, waypoint, travelMode) * 60
                   : getDurationSeconds(
-                      routeNodes.findIndex(
-                        (node) => node.id === optimized[prevInDayIndex].id
-                      ),
+                      routeNodes.findIndex((node) => node.id === prevWaypointInDay.id),
                       routeNodes.findIndex((node) => node.id === waypoint.id)
                     )) || 60) / 60
               )
             );
       let legMeters =
-        prevInDayIndex === null
+        prevWaypointInDay === null
           ? 0
           : Math.round(
-              optimized[prevInDayIndex].isTransitSplit || waypoint.isTransitSplit
-                ? haversineKm(optimized[prevInDayIndex], waypoint) * 1000
+              prevWaypointInDay.isTransitSplit || waypoint.isTransitSplit
+                ? haversineKm(prevWaypointInDay, waypoint) * 1000
                 : getDistanceMeters(
-                    routeNodes.findIndex(
-                      (node) => node.id === optimized[prevInDayIndex].id
-                    ),
+                    routeNodes.findIndex((node) => node.id === prevWaypointInDay.id),
                     routeNodes.findIndex((node) => node.id === waypoint.id)
                   )
             );
