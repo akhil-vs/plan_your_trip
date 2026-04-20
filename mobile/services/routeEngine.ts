@@ -1,10 +1,11 @@
-import { fetchDirections, type RouteInfo } from "./directions";
+import { fetchDirections, fetchOptimizedWaypoints, type RouteInfo } from "./directions";
 import type { TransportMode, WaypointData, RoutePreviewMetric } from "../store/tripStore";
 
 export interface RouteComputationResult {
   route: RouteInfo | null;
   previewByMode: Record<TransportMode, RoutePreviewMetric>;
   activePreview: RoutePreviewMetric;
+  optimizedWaypoints: WaypointData[] | null;
 }
 
 const speedByModeKmph: Record<TransportMode, number> = {
@@ -68,12 +69,40 @@ export async function computeRoutePlan(
       route: null,
       previewByMode,
       activePreview: previewByMode[activeMode],
+      optimizedWaypoints: null,
     };
   }
 
   const serviceMode = profileByMode[activeMode] ?? "driving";
+  let routeWaypoints = ordered;
+  if (ordered.length >= 3 && activeMode !== "transit") {
+    const optimized = await fetchOptimizedWaypoints(
+      ordered.map((wp) => ({
+        id: wp.id,
+        name: wp.name,
+        lat: wp.lat,
+        lng: wp.lng,
+        order: wp.order,
+        isLocked: wp.isLocked,
+      })),
+      serviceMode
+    );
+    if (optimized?.waypoints?.length === ordered.length) {
+      const byId = new Map(ordered.map((wp) => [wp.id, wp]));
+      const reordered = optimized.waypoints
+        .map((optimizedWp, index) => {
+          const existing = byId.get(optimizedWp.id);
+          if (!existing) return null;
+          return { ...existing, order: index };
+        })
+        .filter((wp): wp is WaypointData => Boolean(wp));
+      if (reordered.length === ordered.length) {
+        routeWaypoints = reordered;
+      }
+    }
+  }
   const route = await fetchDirections(
-    ordered.map((w) => ({ lat: w.lat, lng: w.lng })),
+    routeWaypoints.map((w) => ({ lat: w.lat, lng: w.lng })),
     serviceMode
   );
 
@@ -82,6 +111,7 @@ export async function computeRoutePlan(
       route: null,
       previewByMode,
       activePreview: previewByMode[activeMode],
+      optimizedWaypoints: routeWaypoints !== ordered ? routeWaypoints : null,
     };
   }
 
@@ -96,5 +126,6 @@ export async function computeRoutePlan(
     route,
     previewByMode,
     activePreview: previewByMode[activeMode],
+    optimizedWaypoints: routeWaypoints !== ordered ? routeWaypoints : null,
   };
 }

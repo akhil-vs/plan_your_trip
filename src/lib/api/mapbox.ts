@@ -115,6 +115,7 @@ export async function optimizeWaypoints(
   waypoints: OptimizerInputWaypoint[],
   fixedStart = true,
   fixedEnd = true,
+  travelMode: "driving" | "walking" | "cycling" = "driving",
   dayStartMinutes?: number,
   dayEndMinutes?: number,
   defaultVisitMinutes?: number,
@@ -132,6 +133,12 @@ export async function optimizeWaypoints(
         estimatedTravelMeters?: number;
       }[];
       conflicts: { waypointId?: string; message: string }[];
+      optimization?: {
+        objective: "duration";
+        originalTravelSeconds: number;
+        optimizedTravelSeconds: number;
+        optimizedIntermediateWaypointIndex: number[];
+      };
     }
   | null
 > {
@@ -145,6 +152,7 @@ export async function optimizeWaypoints(
       waypoints,
       fixedStart,
       fixedEnd,
+      travelMode,
       dayStartMinutes,
       dayEndMinutes,
       defaultVisitMinutes,
@@ -164,11 +172,18 @@ export async function optimizeWaypoints(
       estimatedTravelMeters?: number;
     }[];
     conflicts?: { waypointId?: string; message: string }[];
+    optimization?: {
+      objective: "duration";
+      originalTravelSeconds: number;
+      optimizedTravelSeconds: number;
+      optimizedIntermediateWaypointIndex: number[];
+    };
   };
   if (!data.waypoints) return null;
   return {
     waypoints: data.waypoints,
     days: data.days || [],
     conflicts: data.conflicts || [],
+    optimization: data.optimization,
   };
 }

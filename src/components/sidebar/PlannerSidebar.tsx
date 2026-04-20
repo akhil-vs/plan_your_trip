@@ -1235,6 +1235,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         waypoints,
         true,
         true,
+        "driving",
         dayStartMinutes,
         dayEndMinutes,
         defaultVisitMinutes,
@@ -1268,13 +1269,32 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             )
           );
           setOptimizeSummary(
-            `Optimized into ${optimized.days.length} day${
-              optimized.days.length !== 1 ? "s" : ""
-            }`
+            optimized.optimization
+              ? `Optimized ${optimized.optimization.optimizedIntermediateWaypointIndex.length} stop${
+                  optimized.optimization.optimizedIntermediateWaypointIndex.length === 1
+                    ? ""
+                    : "s"
+                } by travel time into ${optimized.days.length} day${
+                  optimized.days.length !== 1 ? "s" : ""
+                }`
+              : `Optimized into ${optimized.days.length} day${
+                  optimized.days.length !== 1 ? "s" : ""
+                }`
           );
         } else {
           setOptimizeDays([]);
-          setOptimizeSummary("Route optimized");
+          setOptimizeSummary(
+            optimized.optimization
+              ? `Route optimized by travel time (${Math.max(
+                  0,
+                  Math.round(
+                    (optimized.optimization.originalTravelSeconds -
+                      optimized.optimization.optimizedTravelSeconds) /
+                      60
+                  )
+                )} min saved)`
+              : "Route optimized"
+          );
         }
         if (optimized.conflicts.length > 0) {
           setOptimizationConflicts(optimized.conflicts.map((conflict) => conflict.message));

@@ -42,6 +42,14 @@ function normalizeRouteRoles(points: WaypointData[]): WaypointData[] {
   }));
 }
 
+function hasSameWaypointOrder(a: WaypointData[], b: WaypointData[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].id !== b[i].id) return false;
+  }
+  return true;
+}
+
 export function PlannerScreen({ route }: Props) {
   const { tripId } = route.params;
   const mapRef = useRef<MapView>(null);
@@ -151,6 +159,12 @@ export function PlannerScreen({ route }: Props) {
     async function syncRoute() {
       const computed = await computeRoutePlan(sortedWaypoints, transportMode);
       if (cancelled) return;
+      if (
+        computed.optimizedWaypoints &&
+        !hasSameWaypointOrder(computed.optimizedWaypoints, sortedWaypoints)
+      ) {
+        reorderWaypoints(normalizeRouteRoles(computed.optimizedWaypoints));
+      }
       setRoute(computed.route);
       (Object.keys(computed.previewByMode) as TransportMode[]).forEach((mode) => {
         setRoutePreviewMetric(mode, computed.previewByMode[mode]);
@@ -160,7 +174,7 @@ export function PlannerScreen({ route }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [sortedWaypoints, transportMode, setRoute, setRoutePreviewMetric]);
+  }, [sortedWaypoints, transportMode, setRoute, setRoutePreviewMetric, reorderWaypoints]);
 
   const handlePaddingChange = useCallback(
     (paddingBottom: number) => {

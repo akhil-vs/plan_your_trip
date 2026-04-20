@@ -26,6 +26,13 @@ interface OptimizeConflict {
   message: string;
 }
 
+interface OptimizeMeta {
+  objective: "duration";
+  originalTravelSeconds: number;
+  optimizedTravelSeconds: number;
+  optimizedIntermediateWaypointIndex: number[];
+}
+
 function toRad(value: number): number {
   return (value * Math.PI) / 180;
 }
@@ -45,51 +52,6 @@ function haversineKm(a: OptimizerWaypoint, b: OptimizerWaypoint): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-function nearestNeighborOrder(
-  waypoints: OptimizerWaypoint[],
-  fixedStart: boolean,
-  fixedEnd: boolean
-): OptimizerWaypoint[] {
-  if (waypoints.length <= 2) return waypoints;
-
-  const remaining = [...waypoints];
-  const route: OptimizerWaypoint[] = [];
-  const endWaypoint = fixedEnd ? remaining.pop() : null;
-
-  if (fixedStart) {
-    route.push(remaining.shift() as OptimizerWaypoint);
-  } else {
-    route.push(remaining.shift() as OptimizerWaypoint);
-  }
-
-  while (remaining.length > 0) {
-    const current = route[route.length - 1];
-    let nextIdx = 0;
-    let best = Infinity;
-
-    for (let i = 0; i < remaining.length; i++) {
-      const dist = haversineKm(current, remaining[i]);
-      if (dist < best) {
-        best = dist;
-        nextIdx = i;
-      }
-    }
-    route.push(remaining.splice(nextIdx, 1)[0]);
-  }
-
-  if (endWaypoint) route.push(endWaypoint);
-  return route;
-}
-
-function routeDistanceKm(route: OptimizerWaypoint[]): number {
-  if (route.length < 2) return 0;
-  let total = 0;
-  for (let i = 0; i < route.length - 1; i++) {
-    total += haversineKm(route[i], route[i + 1]);
-  }
-  return total;
-}
-
 function estimateLegMinutes(
   a: OptimizerWaypoint,
   b: OptimizerWaypoint,
@@ -101,107 +63,301 @@ function estimateLegMinutes(
   return Math.max(1, Math.round(hours * 60));
 }
 
-function twoOptRefine(
-  route: OptimizerWaypoint[],
+type MatrixPayload = {
+  durations: (number | null)[][];
+  distances: (number | null)[][];
+};
+
+function formatCoordinatesForMatrix(waypoints: OptimizerWaypoint[]): string {
+  return waypoints.map((wp) => `${wp.lng},${wp.lat}`).join(";");
+}
+
+async function fetchMapboxMatrix(
+  waypoints: OptimizerWaypoint[],
+  travelMode: "driving" | "walking" | "cycling"
+): Promise<MatrixPayload | null> {
+  const token = process.env.MAPBOX_ACCESS_TOKEN;
+  if (!token || waypoints.length < 2 || waypoints.length > 25) return null;
+  const profile =
+    travelMode === "walking"
+      ? "mapbox/walking"
+      : travelMode === "cycling"
+        ? "mapbox/cycling"
+        : "mapbox/driving";
+  const params = new URLSearchParams({
+    access_token: token,
+    annotations: "duration,distance",
+  });
+  const coordinates = formatCoordinatesForMatrix(waypoints);
+  const res = await fetch(
+    `https://api.mapbox.com/directions-matrix/v1/${profile}/${coordinates}?${params}`
+  ).catch(() => null);
+  if (!res || !res.ok) return null;
+  const data = (await res.json().catch(() => null)) as
+    | {
+        durations?: (number | null)[][];
+        distances?: (number | null)[][];
+      }
+    | null;
+  if (!data?.durations || !data?.distances) return null;
+  return { durations: data.durations, distances: data.distances };
+}
+
+function createFallbackMatrix(
+  waypoints: OptimizerWaypoint[],
+  travelMode: "driving" | "walking" | "cycling"
+): MatrixPayload {
+  const size = waypoints.length;
+  const durations: number[][] = Array.from({ length: size }, () =>
+    Array.from({ length: size }, () => 0)
+  );
+  const distances: number[][] = Array.from({ length: size }, () =>
+    Array.from({ length: size }, () => 0)
+  );
+  for (let i = 0; i < size; i += 1) {
+    for (let j = 0; j < size; j += 1) {
+      if (i === j) continue;
+      durations[i][j] = estimateLegMinutes(waypoints[i], waypoints[j], travelMode) * 60;
+      distances[i][j] = Math.round(haversineKm(waypoints[i], waypoints[j]) * 1000);
+    }
+  }
+  return { durations, distances };
+}
+
+function getLegMetric(
+  matrix: (number | null)[][],
+  fallbackSecondsOrMeters: number
+): (from: number, to: number) => number {
+  return (from: number, to: number) => {
+    if (from === to) return 0;
+    const value = matrix[from]?.[to];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+    return fallbackSecondsOrMeters;
+  };
+}
+
+type RouteNode = OptimizerWaypoint & {
+  matrixIndex: number;
+  originalIndex: number;
+};
+
+function routeCost(
+  route: RouteNode[],
+  getCost: (fromMatrixIndex: number, toMatrixIndex: number) => number
+): number {
+  if (route.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < route.length - 1; i += 1) {
+    total += getCost(route[i].matrixIndex, route[i + 1].matrixIndex);
+  }
+  return total;
+}
+
+function nearestNeighborMatrixOrder(
+  nodes: RouteNode[],
   fixedStart: boolean,
-  fixedEnd: boolean
-): OptimizerWaypoint[] {
+  fixedEnd: boolean,
+  getCost: (fromMatrixIndex: number, toMatrixIndex: number) => number
+): RouteNode[] {
+  if (nodes.length <= 2) return nodes;
+  const remaining = [...nodes];
+  const route: RouteNode[] = [];
+  const endNode = fixedEnd ? remaining.pop() : null;
+  route.push(remaining.shift() as RouteNode);
+  while (remaining.length > 0) {
+    const current = route[route.length - 1];
+    let bestIdx = 0;
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < remaining.length; i += 1) {
+      const cost = getCost(current.matrixIndex, remaining[i].matrixIndex);
+      if (cost < best) {
+        best = cost;
+        bestIdx = i;
+      }
+    }
+    route.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  if (endNode) route.push(endNode);
+  return route;
+}
+
+function twoOptRefineByCost(
+  route: RouteNode[],
+  fixedStart: boolean,
+  fixedEnd: boolean,
+  getCost: (fromMatrixIndex: number, toMatrixIndex: number) => number
+): RouteNode[] {
   if (route.length < 4) return route;
   const start = fixedStart ? 1 : 0;
   const endExclusive = fixedEnd ? route.length - 1 : route.length;
   if (endExclusive - start < 3) return route;
-
   let improved = true;
   let bestRoute = [...route];
-  let bestDistance = routeDistanceKm(bestRoute);
-
+  let bestCost = routeCost(bestRoute, getCost);
   while (improved) {
     improved = false;
-    for (let i = start; i < endExclusive - 2; i++) {
-      for (let k = i + 1; k < endExclusive - 1; k++) {
+    for (let i = start; i < endExclusive - 2; i += 1) {
+      for (let k = i + 1; k < endExclusive - 1; k += 1) {
         const candidate = [...bestRoute];
         const reversed = candidate.slice(i, k + 1).reverse();
         candidate.splice(i, k - i + 1, ...reversed);
-        const candidateDistance = routeDistanceKm(candidate);
-        if (candidateDistance + 1e-9 < bestDistance) {
+        const candidateCost = routeCost(candidate, getCost);
+        if (candidateCost + 1e-9 < bestCost) {
           bestRoute = candidate;
-          bestDistance = candidateDistance;
+          bestCost = candidateCost;
           improved = true;
         }
       }
     }
   }
-
   return bestRoute;
 }
 
-function optimizeSegment(
-  segmentWaypoints: OptimizerWaypoint[],
-  fixedStart: boolean,
-  fixedEnd: boolean
-): OptimizerWaypoint[] {
-  const originalDistance = routeDistanceKm(segmentWaypoints);
-  const seed = nearestNeighborOrder(segmentWaypoints, fixedStart, fixedEnd);
-  const refined = twoOptRefine(seed, fixedStart, fixedEnd);
-  const optimizedDistance = routeDistanceKm(refined);
-  // Keep user-entered route unless optimization gives a meaningful gain.
-  const minImprovementRatio = 0.03;
-  const improvementRatio =
-    originalDistance > 0
-      ? (originalDistance - optimizedDistance) / originalDistance
+function heldKarpPath(
+  interior: RouteNode[],
+  startNode: RouteNode | null,
+  endNode: RouteNode | null,
+  getCost: (fromMatrixIndex: number, toMatrixIndex: number) => number
+): RouteNode[] | null {
+  const n = interior.length;
+  if (n === 0) return [];
+  const fullMask = (1 << n) - 1;
+  const dp: number[][] = Array.from({ length: 1 << n }, () =>
+    Array.from({ length: n }, () => Number.POSITIVE_INFINITY)
+  );
+  const parent: number[][] = Array.from({ length: 1 << n }, () =>
+    Array.from({ length: n }, () => -1)
+  );
+  for (let j = 0; j < n; j += 1) {
+    const fromCost = startNode
+      ? getCost(startNode.matrixIndex, interior[j].matrixIndex)
       : 0;
-  return improvementRatio >= minImprovementRatio ? refined : segmentWaypoints;
+    dp[1 << j][j] = fromCost;
+  }
+  for (let mask = 1; mask <= fullMask; mask += 1) {
+    for (let last = 0; last < n; last += 1) {
+      if (((mask >> last) & 1) === 0) continue;
+      const base = dp[mask][last];
+      if (!Number.isFinite(base)) continue;
+      for (let next = 0; next < n; next += 1) {
+        if ((mask >> next) & 1) continue;
+        const nextMask = mask | (1 << next);
+        const candidate =
+          base +
+          getCost(interior[last].matrixIndex, interior[next].matrixIndex);
+        if (candidate < dp[nextMask][next]) {
+          dp[nextMask][next] = candidate;
+          parent[nextMask][next] = last;
+        }
+      }
+    }
+  }
+  let bestLast = -1;
+  let best = Number.POSITIVE_INFINITY;
+  for (let last = 0; last < n; last += 1) {
+    const tail = endNode
+      ? getCost(interior[last].matrixIndex, endNode.matrixIndex)
+      : 0;
+    const total = dp[fullMask][last] + tail;
+    if (total < best) {
+      best = total;
+      bestLast = last;
+    }
+  }
+  if (bestLast < 0) return null;
+  const order: number[] = [];
+  let mask = fullMask;
+  let cursor = bestLast;
+  while (cursor >= 0) {
+    order.push(cursor);
+    const prev = parent[mask][cursor];
+    mask ^= 1 << cursor;
+    cursor = prev;
+  }
+  order.reverse();
+  return order.map((idx) => interior[idx]);
 }
 
-function optimizeWithLocks(
-  waypoints: OptimizerWaypoint[],
+function optimizeSegmentByMatrix(
+  segment: RouteNode[],
   fixedStart: boolean,
   fixedEnd: boolean,
-  lockedWaypointIds: Set<string>
-): OptimizerWaypoint[] {
-  if (waypoints.length < 3) return waypoints;
+  getCost: (fromMatrixIndex: number, toMatrixIndex: number) => number
+): RouteNode[] {
+  if (segment.length <= 2) return segment;
+  const startNode = fixedStart ? segment[0] : null;
+  const endNode = fixedEnd ? segment[segment.length - 1] : null;
+  const interior = segment.slice(fixedStart ? 1 : 0, fixedEnd ? -1 : undefined);
+  if (interior.length <= 1) return segment;
+  let bestInterior: RouteNode[] | null = null;
+  if (interior.length <= 10) {
+    bestInterior = heldKarpPath(interior, startNode, endNode, getCost);
+  }
+  if (!bestInterior) {
+    const seeded = nearestNeighborMatrixOrder(
+      segment,
+      fixedStart,
+      fixedEnd,
+      getCost
+    );
+    const refined = twoOptRefineByCost(seeded, fixedStart, fixedEnd, getCost);
+    const originalCost = routeCost(segment, getCost);
+    const refinedCost = routeCost(refined, getCost);
+    const improvementRatio =
+      originalCost > 0 ? (originalCost - refinedCost) / originalCost : 0;
+    return improvementRatio >= 0.03 ? refined : segment;
+  }
+  return [
+    ...(startNode ? [startNode] : []),
+    ...bestInterior,
+    ...(endNode ? [endNode] : []),
+  ];
+}
 
+function optimizeWithLocksByMatrix(
+  waypoints: RouteNode[],
+  fixedStart: boolean,
+  fixedEnd: boolean,
+  lockedWaypointIds: Set<string>,
+  getCost: (fromMatrixIndex: number, toMatrixIndex: number) => number
+): RouteNode[] {
+  if (waypoints.length < 3) return waypoints;
   const effectiveLocked = new Set<string>(lockedWaypointIds);
   if (fixedStart && waypoints[0]?.id) effectiveLocked.add(waypoints[0].id);
   const lastWaypoint = waypoints[waypoints.length - 1];
-  if (fixedEnd && lastWaypoint?.id) {
-    effectiveLocked.add(lastWaypoint.id);
-  }
-
+  if (fixedEnd && lastWaypoint?.id) effectiveLocked.add(lastWaypoint.id);
   const lockedIndexes = waypoints
     .map((wp, idx) => ({ id: wp.id, idx }))
     .filter((entry) => entry.id && effectiveLocked.has(entry.id))
-    .map((entry) => entry.idx);
-
+    .map((entry) => entry.idx)
+    .sort((a, b) => a - b);
   if (lockedIndexes.length === 0) {
-    return optimizeSegment(waypoints, fixedStart, fixedEnd);
+    return optimizeSegmentByMatrix(waypoints, fixedStart, fixedEnd, getCost);
   }
-
   const result = [...waypoints];
   const bounds = [-1, ...lockedIndexes, waypoints.length];
-
-  for (let i = 0; i < bounds.length - 1; i++) {
+  for (let i = 0; i < bounds.length - 1; i += 1) {
     const startBound = bounds[i];
     const endBound = bounds[i + 1];
     const unlockedStart = startBound + 1;
     const unlockedEnd = endBound - 1;
     if (unlockedStart > unlockedEnd) continue;
-
     const hasStartAnchor = startBound >= 0;
     const hasEndAnchor = endBound < waypoints.length;
-    const segment: OptimizerWaypoint[] = [];
+    const segment: RouteNode[] = [];
     if (hasStartAnchor) segment.push(result[startBound]);
-    for (let idx = unlockedStart; idx <= unlockedEnd; idx++) {
+    for (let idx = unlockedStart; idx <= unlockedEnd; idx += 1) {
       segment.push(result[idx]);
     }
     if (hasEndAnchor) segment.push(result[endBound]);
-
-    const optimizedSegment = optimizeSegment(
+    const optimizedSegment = optimizeSegmentByMatrix(
       segment,
       hasStartAnchor,
-      hasEndAnchor
+      hasEndAnchor,
+      getCost
     );
-
     const interiorStart = hasStartAnchor ? 1 : 0;
     const interiorEndExclusive = hasEndAnchor
       ? optimizedSegment.length - 1
@@ -210,13 +366,55 @@ function optimizeWithLocks(
       interiorStart,
       interiorEndExclusive
     );
-
-    for (let j = 0; j < optimizedInterior.length; j++) {
+    for (let j = 0; j < optimizedInterior.length; j += 1) {
       result[unlockedStart + j] = optimizedInterior[j];
     }
   }
-
   return result;
+}
+
+function mapOptimizedIntermediateOrder(
+  original: RouteNode[],
+  optimized: RouteNode[],
+  fixedStart: boolean,
+  fixedEnd: boolean
+): number[] {
+  if (!fixedStart || !fixedEnd || original.length <= 2) return [];
+  const originalIntermediates = original.slice(1, -1).map((wp) => wp.id || "");
+  const indexById = new Map<string, number>();
+  originalIntermediates.forEach((id, idx) => {
+    indexById.set(id, idx);
+  });
+  return optimized
+    .slice(1, -1)
+    .map((wp) => indexById.get(wp.id || ""))
+    .filter((idx): idx is number => typeof idx === "number");
+}
+
+export function optimizeWaypointOrderByDurationMatrix(input: {
+  waypoints: Array<{ id: string; name: string; lat: number; lng: number }>;
+  durations: (number | null)[][];
+  fixedStart?: boolean;
+  fixedEnd?: boolean;
+  lockedWaypointIds?: string[];
+}): string[] {
+  const fixedStart = input.fixedStart !== false;
+  const fixedEnd = input.fixedEnd !== false;
+  const nodes: RouteNode[] = input.waypoints.map((wp, idx) => ({
+    ...wp,
+    matrixIndex: idx,
+    originalIndex: idx,
+  }));
+  const averageFallbackSeconds = Math.max(60, 10 * 60);
+  const getDurationSeconds = getLegMetric(input.durations, averageFallbackSeconds);
+  const optimized = optimizeWithLocksByMatrix(
+    nodes,
+    fixedStart,
+    fixedEnd,
+    new Set(input.lockedWaypointIds || []),
+    getDurationSeconds
+  );
+  return optimized.map((wp) => wp.id);
 }
 
 function interpolateWaypoint(
@@ -296,12 +494,72 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const refined = optimizeWithLocks(
-    waypoints,
+  const routeNodes: RouteNode[] = waypoints.map((wp, idx) => ({
+    ...wp,
+    matrixIndex: idx,
+    originalIndex: idx,
+  }));
+  const matrix = (await fetchMapboxMatrix(routeNodes, travelMode)) || createFallbackMatrix(routeNodes, travelMode);
+  const averageFallbackSeconds = Math.max(
+    60,
+    Math.round(
+      routeNodes.length > 1
+        ? routeNodes
+            .slice(0, -1)
+            .reduce(
+              (sum, node, idx) =>
+                sum + estimateLegMinutes(node, routeNodes[idx + 1], travelMode) * 60,
+              0
+            ) / (routeNodes.length - 1)
+        : 600
+    )
+  );
+  const averageFallbackMeters = Math.max(
+    1000,
+    Math.round(
+      routeNodes.length > 1
+        ? routeNodes
+            .slice(0, -1)
+            .reduce(
+              (sum, node, idx) => sum + Math.round(haversineKm(node, routeNodes[idx + 1]) * 1000),
+              0
+            ) / (routeNodes.length - 1)
+        : 10000
+    )
+  );
+  const getDurationSeconds = getLegMetric(matrix.durations, averageFallbackSeconds);
+  const getDistanceMeters = getLegMetric(matrix.distances, averageFallbackMeters);
+  const refinedNodes = optimizeWithLocksByMatrix(
+    routeNodes,
     fixedStart,
     fixedEnd,
-    new Set(lockedWaypointIds)
+    new Set(lockedWaypointIds),
+    getDurationSeconds
   );
+  const refined = refinedNodes.map((node) => ({
+    id: node.id,
+    name: node.name,
+    lat: node.lat,
+    lng: node.lng,
+    order: node.order,
+    isTransitSplit: node.isTransitSplit,
+    visitMinutes: node.visitMinutes,
+    openMinutes: node.openMinutes,
+    closeMinutes: node.closeMinutes,
+  }));
+  const originalTravelSeconds = Math.round(routeCost(routeNodes, getDurationSeconds));
+  const optimizedTravelSeconds = Math.round(routeCost(refinedNodes, getDurationSeconds));
+  const optimizationMeta: OptimizeMeta = {
+    objective: "duration",
+    originalTravelSeconds,
+    optimizedTravelSeconds,
+    optimizedIntermediateWaypointIndex: mapOptimizedIntermediateOrder(
+      routeNodes,
+      refinedNodes,
+      fixedStart,
+      fixedEnd
+    ),
+  };
 
   const dailyWindowMinutes = Math.max(30, safeDayEndMinutes - dayStartMinutes);
   const maxLegMinutesBeforeSplit = Math.max(
@@ -320,7 +578,13 @@ export async function POST(req: NextRequest) {
       splitAwareRoute.push(current);
       const next = refined[i + 1];
       if (!next) continue;
-      const legMinutes = estimateLegMinutes(current, next, travelMode);
+      const currentMatrixIdx = routeNodes.findIndex((node) => node.id === current.id);
+      const nextMatrixIdx = routeNodes.findIndex((node) => node.id === next.id);
+      const legSeconds =
+        currentMatrixIdx >= 0 && nextMatrixIdx >= 0
+          ? getDurationSeconds(currentMatrixIdx, nextMatrixIdx)
+          : estimateLegMinutes(current, next, travelMode) * 60;
+      const legMinutes = Math.max(1, Math.round(legSeconds / 60));
       if (legMinutes <= maxLegMinutesBeforeSplit) continue;
 
       const segments = Math.ceil(legMinutes / maxLegMinutesBeforeSplit);
@@ -421,11 +685,32 @@ export async function POST(req: NextRequest) {
       let legMinutes =
         prevInDayIndex === null
           ? 0
-          : estimateLegMinutes(optimized[prevInDayIndex], waypoint, travelMode);
+          : Math.max(
+              1,
+              Math.round(
+                ((optimized[prevInDayIndex].isTransitSplit || waypoint.isTransitSplit
+                  ? estimateLegMinutes(optimized[prevInDayIndex], waypoint, travelMode) * 60
+                  : getDurationSeconds(
+                      routeNodes.findIndex(
+                        (node) => node.id === optimized[prevInDayIndex].id
+                      ),
+                      routeNodes.findIndex((node) => node.id === waypoint.id)
+                    )) || 60) / 60
+              )
+            );
       let legMeters =
         prevInDayIndex === null
           ? 0
-          : Math.round(haversineKm(optimized[prevInDayIndex], waypoint) * 1000);
+          : Math.round(
+              optimized[prevInDayIndex].isTransitSplit || waypoint.isTransitSplit
+                ? haversineKm(optimized[prevInDayIndex], waypoint) * 1000
+                : getDistanceMeters(
+                    routeNodes.findIndex(
+                      (node) => node.id === optimized[prevInDayIndex].id
+                    ),
+                    routeNodes.findIndex((node) => node.id === waypoint.id)
+                  )
+            );
       let projectedTravelMinutes = currentTravelMinutes + legMinutes;
       let projectedTravelMeters = currentTravelMeters + legMeters;
       let projectedArrival = currentClockMinutes + legMinutes;
@@ -450,10 +735,27 @@ export async function POST(req: NextRequest) {
         currentClockMinutes = dayStartMinutes;
         const previousWaypoint = optimized[i - 1];
         const carryTravelMinutes = previousWaypoint
-          ? estimateLegMinutes(previousWaypoint, waypoint, travelMode)
+          ? Math.max(
+              1,
+              Math.round(
+                ((previousWaypoint.isTransitSplit || waypoint.isTransitSplit
+                  ? estimateLegMinutes(previousWaypoint, waypoint, travelMode) * 60
+                  : getDurationSeconds(
+                      routeNodes.findIndex((node) => node.id === previousWaypoint.id),
+                      routeNodes.findIndex((node) => node.id === waypoint.id)
+                    )) || 60) / 60
+              )
+            )
           : 0;
         const carryTravelMeters = previousWaypoint
-          ? Math.round(haversineKm(previousWaypoint, waypoint) * 1000)
+          ? Math.round(
+              previousWaypoint.isTransitSplit || waypoint.isTransitSplit
+                ? haversineKm(previousWaypoint, waypoint) * 1000
+                : getDistanceMeters(
+                    routeNodes.findIndex((node) => node.id === previousWaypoint.id),
+                    routeNodes.findIndex((node) => node.id === waypoint.id)
+                  )
+            )
           : 0;
         prevInDayIndex = null;
         legMinutes = carryTravelMinutes;
@@ -492,5 +794,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ waypoints: optimized, days, conflicts });
+  return NextResponse.json({ waypoints: optimized, days, conflicts, optimization: optimizationMeta });
 }
