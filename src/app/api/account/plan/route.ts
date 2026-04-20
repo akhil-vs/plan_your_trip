@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 
 type Plan = "FREE" | "PRO" | "TEAM";
 
 const VALID_PLANS: Plan[] = ["FREE", "PRO", "TEAM"];
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
+export async function GET(request: NextRequest) {
+  const authUser = await getApiUser(request);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: authUser.id },
     select: { id: true, email: true, name: true, plan: true },
   });
   if (!user) {
@@ -23,8 +23,8 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -35,7 +35,7 @@ export async function PUT(req: NextRequest) {
   }
 
   const updated = await prisma.user.update({
-    where: { id: session.user.id },
+    where: { id: authUser.id },
     data: { plan },
     select: { id: true, email: true, name: true, plan: true },
   });

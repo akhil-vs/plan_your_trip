@@ -1,21 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { isAdminEmail } from "@/lib/admin";
 
 type Plan = "FREE" | "PRO" | "TEAM";
 const VALID_PLANS: Plan[] = ["FREE", "PRO", "TEAM"];
 
-async function guardAdmin() {
-  const session = await auth();
-  if (!session?.user?.id || !isAdminEmail(session.user.email)) {
+async function guardAdmin(request: NextRequest) {
+  const user = await getApiUser(request);
+  if (!user?.id || !isAdminEmail(user.email)) {
     return null;
   }
-  return session;
+  return user;
 }
 
-export async function GET() {
-  const admin = await guardAdmin();
+export async function GET(request: NextRequest) {
+  const admin = await guardAdmin(request);
   if (!admin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -36,7 +36,7 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const admin = await guardAdmin();
+  const admin = await guardAdmin(req);
   if (!admin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

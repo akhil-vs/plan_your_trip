@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { createTripEvent } from "@/lib/tripEvents";
 import { fetchNearbyAttractionStops } from "@/lib/nearbyAttractions";
@@ -7,8 +7,8 @@ import { fetchNearbyAttractionStops } from "@/lib/nearbyAttractions";
 const PREFS = ["solo", "couple", "family", "group"] as const;
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: authUser.id },
     select: { onboardingComplete: true },
   });
   if (user?.onboardingComplete) {
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       data: {
         name: tripName,
         description: `Travel style: ${travelPreference}. Started from onboarding.`,
-        userId: session.user.id,
+        userId: authUser.id,
         waypoints: {
           create: waypoints.map((wp) => ({
             name: wp.name,
@@ -78,14 +78,14 @@ export async function POST(req: NextRequest) {
           ],
         },
         members: {
-          create: { userId: session.user.id, role: "OWNER" },
+          create: { userId: authUser.id, role: "OWNER" },
         },
       },
       include: { waypoints: { orderBy: { order: "asc" } } },
     });
 
     await prisma.user.update({
-      where: { id: session.user.id },
+      where: { id: authUser.id },
       data: {
         onboardingComplete: true,
         travelPreference,
@@ -96,8 +96,8 @@ export async function POST(req: NextRequest) {
       trip.id,
       "trip.created",
       { name: trip.name, waypointCount: trip.waypoints.length, source: "onboarding" },
-      session.user.id,
-      session.user.name ?? null
+      authUser.id,
+      authUser.name ?? null
     );
 
     return NextResponse.json({ tripId: trip.id }, { status: 201 });

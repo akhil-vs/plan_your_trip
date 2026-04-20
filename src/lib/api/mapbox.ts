@@ -125,7 +125,12 @@ export async function optimizeWaypoints(
 ): Promise<
   | {
       waypoints: OptimizerInputWaypoint[];
-      days: { day: number; waypointIndexes: number[]; estimatedTravelMinutes: number }[];
+      days: {
+        day: number;
+        waypointIndexes: number[];
+        estimatedTravelMinutes: number;
+        estimatedTravelMeters?: number;
+      }[];
       conflicts: { waypointId?: string; message: string }[];
     }
   | null
@@ -152,7 +157,12 @@ export async function optimizeWaypoints(
   if (!res.ok) return null;
   const data = (await res.json()) as {
     waypoints?: OptimizerInputWaypoint[];
-    days?: { day: number; waypointIndexes: number[]; estimatedTravelMinutes: number }[];
+    days?: {
+      day: number;
+      waypointIndexes: number[];
+      estimatedTravelMinutes: number;
+      estimatedTravelMeters?: number;
+    }[];
     conflicts?: { waypointId?: string; message: string }[];
   };
   if (!data.waypoints) return null;

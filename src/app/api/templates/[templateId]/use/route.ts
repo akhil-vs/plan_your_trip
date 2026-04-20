@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ templateId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { templateId } = await params;
 
   const template = await prisma.tripTemplate.findFirst({
-    where: { id: templateId, userId: session.user.id },
+    where: { id: templateId, userId: authUser.id },
     include: { waypoints: { orderBy: { order: "asc" } } },
   });
 
@@ -26,7 +26,7 @@ export async function POST(
     data: {
       name: template.name.replace(/ Template$/, ""),
       description: template.description,
-      userId: session.user.id,
+      userId: authUser.id,
       waypoints: {
         create: template.waypoints.map((wp) => ({
           name: wp.name,

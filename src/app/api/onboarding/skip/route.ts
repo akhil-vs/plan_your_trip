@@ -1,15 +1,15 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 
-export async function POST() {
-  const session = await auth();
-  if (!session?.user?.id) {
+export async function POST(request: NextRequest) {
+  const authUser = await getApiUser(request);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: authUser.id },
     select: { onboardingComplete: true },
   });
   if (user?.onboardingComplete) {
@@ -17,7 +17,7 @@ export async function POST() {
   }
 
   await prisma.user.update({
-    where: { id: session.user.id },
+    where: { id: authUser.id },
     data: { onboardingComplete: true },
   });
 

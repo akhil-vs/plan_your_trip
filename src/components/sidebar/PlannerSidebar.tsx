@@ -79,6 +79,7 @@ interface DayPlan {
   day: number;
   waypointIds: string[];
   estimatedTravelMinutes: number;
+  estimatedTravelMeters: number;
 }
 
 interface OptimizationSnapshot {
@@ -115,7 +116,12 @@ interface SaveSignatureInput {
     openMinutes?: number;
     closeMinutes?: number;
   }>;
-  dayPlans: Array<{ day: number; waypointIds: string[]; estimatedTravelMinutes: number }>;
+  dayPlans: Array<{
+    day: number;
+    waypointIds: string[];
+    estimatedTravelMinutes: number;
+    estimatedTravelMeters: number;
+  }>;
   dayStartMinutes: number;
   dayEndMinutes: number;
   defaultVisitMinutes: number;
@@ -130,6 +136,7 @@ interface StarterTemplate {
 
 /** Shown in the save-name dialog when the user has not entered a title yet. */
 const DEFAULT_SAVE_NAME = "Untitled";
+const TRANSIT_SPLIT_NAME_PREFIX = "Transit stop between ";
 
 const STARTER_TEMPLATES: StarterTemplate[] = [
   {
@@ -205,7 +212,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const [optimizeDays, setOptimizeDays] = useState<DayPlan[]>([]);
   const [showDayPlanner, setShowDayPlanner] = useState(false);
   const [dayPlannerOpen, setDayPlannerOpen] = useState(false);
-  const [autoSplitLongTransfers, setAutoSplitLongTransfers] = useState(true);
+  const [autoSplitLongTransfers, setAutoSplitLongTransfers] = useState(false);
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
   const [optimizationConflicts, setOptimizationConflicts] = useState<string[]>([]);
   const [visitMinutesByWaypointId, setVisitMinutesByWaypointId] = useState<
@@ -414,6 +421,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             day: plan.day,
             waypointIds: uniqueValidIds,
             estimatedTravelMinutes: Math.max(0, Math.round(plan.estimatedTravelMinutes || 0)),
+            estimatedTravelMeters: Math.max(0, Math.round(plan.estimatedTravelMeters || 0)),
           };
         })
         .filter((plan) => plan.waypointIds.length > 0);
@@ -428,6 +436,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             day: 1,
             waypointIds: allWaypoints.map((wp) => wp.id),
             estimatedTravelMinutes: 0,
+            estimatedTravelMeters: 0,
           },
         ];
       }
@@ -438,6 +447,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             day: 1,
             waypointIds: missingIds,
             estimatedTravelMinutes: 0,
+            estimatedTravelMeters: 0,
           });
         } else {
           cleaned[cleaned.length - 1] = {
@@ -542,6 +552,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     return `${hrs}h ${mins}m`;
   };
 
+  const formatKm = (meters: number) => {
+    if (!Number.isFinite(meters) || meters <= 0) return "0.0 km";
+    return `${(meters / 1000).toFixed(1)} km`;
+  };
+
   const estimateLegMinutesForDay = (a: WaypointData, b: WaypointData) => {
     const toRad = (value: number) => (value * Math.PI) / 180;
     const earthRadiusKm = 6371;
@@ -559,20 +574,56 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     return Math.max(1, Math.round((distanceKm / speedKmPerHour) * 60));
   };
 
+  const estimateLegMetersForDay = (a: WaypointData, b: WaypointData) => {
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const earthRadiusKm = 6371;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLng = Math.sin(dLng / 2);
+    const h =
+      sinDLat * sinDLat +
+      Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+    const distanceKm = 2 * earthRadiusKm * Math.asin(Math.sqrt(h));
+    return Math.round(distanceKm * 1000);
+  };
+
   const recalculateDayPlanTravel = (
     plans: DayPlan[],
     allWaypoints: WaypointData[]
   ): DayPlan[] => {
     const waypointById = new Map(allWaypoints.map((wp) => [wp.id, wp]));
+    let previousDayLastWaypointId: string | null = null;
+
     return plans.map((plan) => {
       let estimatedTravelMinutes = 0;
+      let estimatedTravelMeters = 0;
+
+      // Carry-over leg: previous day's endpoint -> current day's first stop.
+      if (previousDayLastWaypointId && plan.waypointIds.length > 0) {
+        const previousDayLast = waypointById.get(previousDayLastWaypointId);
+        const currentDayFirst = waypointById.get(plan.waypointIds[0]);
+        if (previousDayLast && currentDayFirst) {
+          estimatedTravelMinutes += estimateLegMinutesForDay(previousDayLast, currentDayFirst);
+          estimatedTravelMeters += estimateLegMetersForDay(previousDayLast, currentDayFirst);
+        }
+      }
+
       for (let i = 0; i < plan.waypointIds.length - 1; i += 1) {
         const from = waypointById.get(plan.waypointIds[i]);
         const to = waypointById.get(plan.waypointIds[i + 1]);
         if (!from || !to) continue;
         estimatedTravelMinutes += estimateLegMinutesForDay(from, to);
+        estimatedTravelMeters += estimateLegMetersForDay(from, to);
       }
-      return { ...plan, estimatedTravelMinutes };
+
+      if (plan.waypointIds.length > 0) {
+        previousDayLastWaypointId = plan.waypointIds[plan.waypointIds.length - 1];
+      }
+
+      return { ...plan, estimatedTravelMinutes, estimatedTravelMeters };
     });
   };
 
@@ -591,6 +642,37 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const getDayTotalMinutes = (dayPlan: DayPlan) =>
     dayPlan.estimatedTravelMinutes + getDayVisitMinutes(dayPlan);
 
+  const getWaypointNameById = (id: string) =>
+    waypoints.find((w) => w.id === id)?.name;
+
+  const getDayRouteLabel = (dayPlan: DayPlan) => {
+    const dayIndex = optimizeDays.findIndex((d) => d.day === dayPlan.day);
+    const dayNames = dayPlan.waypointIds
+      .map((id) => getWaypointNameById(id))
+      .filter((name): name is string => Boolean(name));
+
+    if (dayNames.length === 0) {
+      return "";
+    }
+
+    const previousDay = dayIndex > 0 ? optimizeDays[dayIndex - 1] : null;
+    const previousDayLastId =
+      previousDay && previousDay.waypointIds.length > 0
+        ? previousDay.waypointIds[previousDay.waypointIds.length - 1]
+        : null;
+    const previousDayLastName = previousDayLastId
+      ? getWaypointNameById(previousDayLastId)
+      : null;
+
+    if (dayNames.length === 1) {
+      return previousDayLastName
+        ? `${previousDayLastName} -> ${dayNames[0]}`
+        : dayNames[0];
+    }
+
+    return dayNames.join(" -> ");
+  };
+
   const createSnapshot = (
     currentWaypoints: WaypointData[],
     days: DayPlan[],
@@ -601,6 +683,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       day: d.day,
       waypointIds: [...d.waypointIds],
       estimatedTravelMinutes: d.estimatedTravelMinutes,
+      estimatedTravelMeters: d.estimatedTravelMeters,
     })),
     summary,
   });
@@ -702,6 +785,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setOptimizationHistory([]);
     setOptimizationBaseline(null);
     setLastSavedSignature(null);
+    setAutoSplitLongTransfers(false);
   }, [
     resetTrip,
     setTripId,
@@ -709,6 +793,13 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setDayEndMinutes,
     setDefaultVisitMinutes,
   ]);
+
+  const isSyntheticTransitWaypoint = useCallback(
+    (wp: { isTransitSplit?: boolean; name?: string }) =>
+      wp.isTransitSplit === true ||
+      (typeof wp.name === "string" && wp.name.startsWith(TRANSIT_SPLIT_NAME_PREFIX)),
+    []
+  );
 
   // New trip: reset store. Existing trip: load data
   useEffect(() => {
@@ -749,7 +840,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                 : 1
           );
           lastEventAtRef.current = Date.now();
-          const loadedWaypoints = [...data.waypoints].sort(
+          const loadedWaypoints = [...data.waypoints]
+            .filter(
+              (wp: { isTransitSplit?: boolean; name?: string }) =>
+                !isSyntheticTransitWaypoint(wp)
+            )
+            .sort(
             (a: { order: number }, b: { order: number }) => a.order - b.order
           );
           const loadedWaypointIdSet = new Set(
@@ -841,6 +937,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                     waypointIndexes: number[];
                     waypointIds?: string[];
                     estimatedTravelMinutes: number;
+                    estimatedTravelMeters?: number;
                   }) => ({
                     day: dp.day,
                     waypointIds:
@@ -852,11 +949,16 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                             .map((idx) => loadedWaypoints[idx]?.id)
                             .filter(Boolean),
                     estimatedTravelMinutes: dp.estimatedTravelMinutes || 0,
+                    estimatedTravelMeters: dp.estimatedTravelMeters || 0,
                   })
                 )
               : []
           );
-          setOptimizeDays(normalizedLoadedDayPlans);
+          const recalculatedLoadedDayPlans = recalculateDayPlanTravel(
+            normalizedLoadedDayPlans,
+            loadedWaypoints
+          );
+          setOptimizeDays(recalculatedLoadedDayPlans);
           setLastSavedSignature(
             createSaveSignature({
               name: loadedTripName.trim() ? loadedTripName : DEFAULT_SAVE_NAME,
@@ -878,7 +980,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   isTransitSplit: wp.isTransitSplit ?? false,
                 })
               ),
-              dayPlans: normalizedLoadedDayPlans,
+              dayPlans: recalculatedLoadedDayPlans,
               dayStartMinutes:
                 typeof data.optimizerDayStartMinutes === "number"
                   ? data.optimizerDayStartMinutes
@@ -906,6 +1008,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     resetTrip,
     reorderWaypoints,
     normalizeDayPlans,
+    isSyntheticTransitWaypoint,
     setDayStartMinutes,
     setDayEndMinutes,
     setDefaultVisitMinutes,
@@ -921,7 +1024,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     try {
       const body = {
         name: nameToPersist,
-        waypoints: waypoints.map((w) => ({
+        waypoints: waypoints
+          .filter((w) => !isSyntheticTransitWaypoint(w))
+          .map((w) => ({
           id: w.id,
           name: w.name,
           notes: w.notes || "",
@@ -934,13 +1039,14 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           closeMinutes:
             timeWindowsByWaypointId[w.id]?.closeMinutes ?? w.closeMinutes ?? 23 * 60 + 59,
         })),
-        dayPlans: optimizeDays.map((dp) => ({
+        dayPlans: recalculateDayPlanTravel(optimizeDays, waypoints).map((dp) => ({
           day: dp.day,
           waypointIds: dp.waypointIds,
           waypointIndexes: dp.waypointIds
             .map((id) => waypoints.findIndex((w) => w.id === id))
             .filter((idx) => idx >= 0),
           estimatedTravelMinutes: dp.estimatedTravelMinutes,
+          estimatedTravelMeters: dp.estimatedTravelMeters,
         })),
         optimizationSettings: {
           dayStartMinutes,
@@ -1157,6 +1263,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   .map((idx) => optimized.waypoints[idx]?.id)
                   .filter(Boolean),
                 estimatedTravelMinutes: dayPlan.estimatedTravelMinutes,
+                estimatedTravelMeters: dayPlan.estimatedTravelMeters || 0,
               }))
             )
           );
@@ -1991,7 +2098,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <p className="text-xs text-muted-foreground cursor-help">
-                              {formatMinutes(getDayTotalMinutes(dayPlan))} total
+                              {formatMinutes(getDayTotalMinutes(dayPlan))} ·{" "}
+                              {formatKm(dayPlan.estimatedTravelMeters)} total
                             </p>
                           </TooltipTrigger>
                           <TooltipContent side="top">
@@ -2009,7 +2117,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                       <div className="space-y-1.5">
                         <p className="text-[11px] text-muted-foreground">
                           {formatMinutes(dayPlan.estimatedTravelMinutes)} travel +{" "}
-                          {formatMinutes(getDayVisitMinutes(dayPlan))} visit
+                          {formatMinutes(getDayVisitMinutes(dayPlan))} visit ·{" "}
+                          {formatKm(dayPlan.estimatedTravelMeters)}
                         </p>
                         {dayPlan.waypointIds.map((id, idx) => {
                           const wp = waypoints.find((w) => w.id === id);
@@ -2114,10 +2223,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                       </div>
                     ) : (
                       <p className="text-xs text-muted-foreground line-clamp-2">
-                        {dayPlan.waypointIds
-                          .map((id) => waypoints.find((w) => w.id === id)?.name)
-                          .filter(Boolean)
-                          .join(" -> ")}
+                        {getDayRouteLabel(dayPlan)}
                       </p>
                     )}
                   </div>

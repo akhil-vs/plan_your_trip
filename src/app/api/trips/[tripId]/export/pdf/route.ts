@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canViewTrip, getTripAccess } from "@/lib/tripAccess";
 import { buildSimplePdf, buildTripItineraryPdf } from "@/lib/pdf";
@@ -8,15 +8,15 @@ import { canUsePremiumPdf } from "@/lib/subscription";
 export const runtime = "nodejs";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canViewTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -40,7 +40,7 @@ export async function GET(
     return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
 
-  const canUsePremiumExport = canUsePremiumPdf(session.user.plan);
+  const canUsePremiumExport = canUsePremiumPdf(authUser.plan);
   if (!canUsePremiumExport) {
     const lines: string[] = [
       `Status: ${trip.status}${trip.isPublic ? " (Published)" : ""}`,

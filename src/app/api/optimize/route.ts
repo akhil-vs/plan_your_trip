@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { canUseAdvancedOptimization } from "@/lib/subscription";
 
 interface OptimizerWaypoint {
@@ -18,6 +18,7 @@ interface DayPlan {
   day: number;
   waypointIndexes: number[];
   estimatedTravelMinutes: number;
+  estimatedTravelMeters: number;
 }
 
 interface OptimizeConflict {
@@ -139,8 +140,17 @@ function optimizeSegment(
   fixedStart: boolean,
   fixedEnd: boolean
 ): OptimizerWaypoint[] {
+  const originalDistance = routeDistanceKm(segmentWaypoints);
   const seed = nearestNeighborOrder(segmentWaypoints, fixedStart, fixedEnd);
-  return twoOptRefine(seed, fixedStart, fixedEnd);
+  const refined = twoOptRefine(seed, fixedStart, fixedEnd);
+  const optimizedDistance = routeDistanceKm(refined);
+  // Keep user-entered route unless optimization gives a meaningful gain.
+  const minImprovementRatio = 0.03;
+  const improvementRatio =
+    originalDistance > 0
+      ? (originalDistance - optimizedDistance) / originalDistance
+      : 0;
+  return improvementRatio >= minImprovementRatio ? refined : segmentWaypoints;
 }
 
 function optimizeWithLocks(
@@ -220,81 +230,10 @@ function interpolateWaypoint(
   };
 }
 
-async function reverseGeocodeLocationName(
-  lat: number,
-  lng: number,
-  cache: Map<string, string | null>
-) {
-  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-  if (cache.has(key)) return cache.get(key) || null;
-
-  try {
-    const accessToken =
-      process.env.MAPBOX_ACCESS_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-    if (accessToken) {
-      const mapboxEndpoint = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${encodeURIComponent(
-        accessToken
-      )}&types=place,locality,neighborhood,address&limit=1`;
-      const mapboxRes = await fetch(mapboxEndpoint, { cache: "no-store" });
-      if (mapboxRes.ok) {
-        const data = (await mapboxRes.json()) as {
-          features?: Array<{ place_name?: string; text?: string }>;
-        };
-        const feature = data.features?.[0];
-        const label = feature?.place_name || feature?.text || null;
-        if (label) {
-          cache.set(key, label);
-          return label;
-        }
-      }
-    }
-
-    // Fallback: Geoapify reverse geocoding, usually returns locality/address label.
-    const geoapifyKey = process.env.GEOAPIFY_API_KEY;
-    if (geoapifyKey) {
-      const geoEndpoint = `https://api.geoapify.com/v1/geocode/reverse?lat=${encodeURIComponent(
-        String(lat)
-      )}&lon=${encodeURIComponent(String(lng))}&format=json&apiKey=${encodeURIComponent(
-        geoapifyKey
-      )}`;
-      const geoRes = await fetch(geoEndpoint, { cache: "no-store" });
-      if (geoRes.ok) {
-        const geoData = (await geoRes.json()) as {
-          results?: Array<{
-            formatted?: string;
-            address_line1?: string;
-            city?: string;
-            town?: string;
-            village?: string;
-            county?: string;
-          }>;
-        };
-        const first = geoData.results?.[0];
-        const fallbackLabel =
-          first?.address_line1 ||
-          first?.city ||
-          first?.town ||
-          first?.village ||
-          first?.county ||
-          first?.formatted ||
-          null;
-        cache.set(key, fallbackLabel);
-        return fallbackLabel;
-      }
-    }
-
-    cache.set(key, null);
-    return null;
-  } catch {
-    cache.set(key, null);
-    return null;
-  }
-}
-
 export async function POST(req: NextRequest) {
-  const session = await auth();
+  const authUser = await getApiUser(req);
   const advancedOptimizationEnabled = canUseAdvancedOptimization(
-    session?.user?.plan || "FREE"
+    authUser?.plan || "FREE"
   );
   const body = await req.json().catch(() => null);
   const rawWaypoints = (body?.waypoints || []) as OptimizerWaypoint[];
@@ -374,7 +313,6 @@ export async function POST(req: NextRequest) {
   // virtual waypoints so itinerary is naturally split across days.
   const splitAwareRoute: OptimizerWaypoint[] = [];
   const autoSplitConflicts: OptimizeConflict[] = [];
-  const reverseGeoCache = new Map<string, string | null>();
   const splitBatchId = Date.now().toString(36);
   if (autoSplitLongTransfers) {
     for (let i = 0; i < refined.length; i += 1) {
@@ -389,14 +327,11 @@ export async function POST(req: NextRequest) {
       for (let segment = 1; segment < segments; segment += 1) {
         const ratio = segment / segments;
         const point = interpolateWaypoint(current, next, ratio);
-        const realLocationName = await reverseGeocodeLocationName(
-          point.lat,
-          point.lng,
-          reverseGeoCache
-        );
         splitAwareRoute.push({
           id: `transit-${splitBatchId}-${current.id || i}-${next.id || i + 1}-${segment}`,
-          name: realLocationName || `Between ${current.name} and ${next.name}`,
+          // Keep synthetic transfer stops clearly virtual so users do not interpret
+          // geocoder labels (e.g. "Wales") as intentional itinerary destinations.
+          name: `Transit stop between ${current.name} and ${next.name}`,
           lat: point.lat,
           lng: point.lng,
           isTransitSplit: true,
@@ -476,6 +411,7 @@ export async function POST(req: NextRequest) {
     let currentDay = 1;
     let currentIndexes: number[] = [];
     let currentTravelMinutes = 0;
+    let currentTravelMeters = 0;
     let currentClockMinutes = dayStartMinutes;
 
     for (let i = 0; i < optimized.length; i++) {
@@ -486,7 +422,12 @@ export async function POST(req: NextRequest) {
         prevInDayIndex === null
           ? 0
           : estimateLegMinutes(optimized[prevInDayIndex], waypoint, travelMode);
+      let legMeters =
+        prevInDayIndex === null
+          ? 0
+          : Math.round(haversineKm(optimized[prevInDayIndex], waypoint) * 1000);
       let projectedTravelMinutes = currentTravelMinutes + legMinutes;
+      let projectedTravelMeters = currentTravelMeters + legMeters;
       let projectedArrival = currentClockMinutes + legMinutes;
       let fitCurrent = canFitWaypointInDay(
         waypoint,
@@ -499,19 +440,26 @@ export async function POST(req: NextRequest) {
           day: currentDay,
           waypointIndexes: currentIndexes,
           estimatedTravelMinutes: currentTravelMinutes,
+          estimatedTravelMeters: currentTravelMeters,
         });
 
         currentDay += 1;
         currentIndexes = [];
         currentTravelMinutes = 0;
+        currentTravelMeters = 0;
         currentClockMinutes = dayStartMinutes;
         const previousWaypoint = optimized[i - 1];
         const carryTravelMinutes = previousWaypoint
           ? estimateLegMinutes(previousWaypoint, waypoint, travelMode)
           : 0;
+        const carryTravelMeters = previousWaypoint
+          ? Math.round(haversineKm(previousWaypoint, waypoint) * 1000)
+          : 0;
         prevInDayIndex = null;
         legMinutes = carryTravelMinutes;
+        legMeters = carryTravelMeters;
         projectedTravelMinutes = carryTravelMinutes;
+        projectedTravelMeters = carryTravelMeters;
         projectedArrival = currentClockMinutes + carryTravelMinutes;
         fitCurrent = canFitWaypointInDay(
           waypoint,
@@ -529,6 +477,7 @@ export async function POST(req: NextRequest) {
       }
       currentIndexes.push(i);
       currentTravelMinutes = projectedTravelMinutes;
+      currentTravelMeters = projectedTravelMeters;
       currentClockMinutes = Math.max(projectedArrival, fitCurrent.visitStart);
       currentClockMinutes += fitCurrent.visitMinutes;
     }
@@ -538,6 +487,7 @@ export async function POST(req: NextRequest) {
         day: currentDay,
         waypointIndexes: currentIndexes,
         estimatedTravelMinutes: currentTravelMinutes,
+        estimatedTravelMeters: currentTravelMeters,
       });
     }
   }

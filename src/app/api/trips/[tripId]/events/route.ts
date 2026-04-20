@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { canViewTrip, getTripAccess } from "@/lib/tripAccess";
 import { prisma } from "@/lib/prisma";
 import { canUseActivityTimeline } from "@/lib/subscription";
@@ -14,12 +14,12 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canViewTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -32,7 +32,7 @@ export async function GET(
   const historyOnly = url.searchParams.get("mode") === "history";
   const initialSince = Number(url.searchParams.get("since") || 0);
 
-  if (historyOnly && !canUseActivityTimeline(session.user.plan)) {
+  if (historyOnly && !canUseActivityTimeline(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro to access activity timeline" },
       { status: 402 }

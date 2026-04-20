@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+MobileBareTemplate/
 
 # debug
 npm-debug.log*

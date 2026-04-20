@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
@@ -8,13 +8,13 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -36,8 +36,8 @@ export async function POST(
     tripId,
     "trip.published",
     { isPublic: true, shareId: updated.shareId },
-    session.user.id,
-    session.user.name ?? null
+    authUser.id,
+    authUser.name ?? null
   );
   return NextResponse.json({
     ...updated,
@@ -46,16 +46,16 @@ export async function POST(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -70,8 +70,8 @@ export async function DELETE(
     tripId,
     "trip.unpublished",
     { isPublic: false },
-    session.user.id,
-    session.user.name ?? null
+    authUser.id,
+    authUser.name ?? null
   );
 
   return NextResponse.json(updated);

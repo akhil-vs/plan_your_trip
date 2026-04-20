@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
@@ -8,21 +8,21 @@ import { sendTripInviteEmail } from "@/lib/email";
 import { canUseCollaboration } from "@/lib/subscription";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro to manage collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -38,18 +38,18 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro to manage collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -79,7 +79,7 @@ export async function POST(
       email,
       role,
       token,
-      senderId: session.user.id,
+      senderId: authUser.id,
       expiresAt,
     },
   });
@@ -92,7 +92,7 @@ export async function POST(
   const acceptUrl = `${req.nextUrl.origin}/invite/${invite.token}`;
   const emailResult = await sendTripInviteEmail({
     inviteeEmail: email,
-    inviterName: session.user.name || session.user.email || "A collaborator",
+    inviterName: authUser.name || authUser.email || "A collaborator",
     tripName: trip?.name?.trim() || "Untitled",
     role,
     acceptUrl,
@@ -102,8 +102,8 @@ export async function POST(
     tripId,
     "trip.invite.created",
     { email, role, inviteId: invite.id },
-    session.user.id,
-    session.user.name ?? null
+    authUser.id,
+    authUser.name ?? null
   );
 
   return NextResponse.json({
@@ -118,18 +118,18 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro to manage collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -147,8 +147,8 @@ export async function DELETE(
     tripId,
     "trip.invite.revoked",
     { inviteId },
-    session.user.id,
-    session.user.name ?? null
+    authUser.id,
+    authUser.name ?? null
   );
   return NextResponse.json(invite);
 }

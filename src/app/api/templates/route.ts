@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
+export async function GET(request: NextRequest) {
+  const authUser = await getApiUser(request);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const templates = await prisma.tripTemplate.findMany({
-    where: { userId: session.user.id },
+    where: { userId: authUser.id },
     include: { waypoints: { orderBy: { order: "asc" } } },
     orderBy: { updatedAt: "desc" },
   });
@@ -18,8 +18,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   }
 
   const trip = await prisma.trip.findFirst({
-    where: { id: tripId, userId: session.user.id },
+    where: { id: tripId, userId: authUser.id },
     include: { waypoints: { orderBy: { order: "asc" } } },
   });
 
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     data: {
       name: typeof name === "string" && name.trim() ? name.trim() : `${trip.name} Template`,
       description: trip.description,
-      userId: session.user.id,
+      userId: authUser.id,
       waypoints: {
         create: trip.waypoints.map((wp) => ({
           name: wp.name,

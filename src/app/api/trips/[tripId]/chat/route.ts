@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canViewTrip, getTripAccess } from "@/lib/tripAccess";
 import { canUseCollaboration } from "@/lib/subscription";
@@ -8,21 +8,21 @@ const MAX_BODY_LEN = 4000;
 const MAX_IMAGE_URL_LEN = 750_000;
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro for trip chat and collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canViewTrip(access.role)) {
     return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
@@ -43,18 +43,18 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro for trip chat and collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canViewTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -86,7 +86,7 @@ export async function POST(
   const message = await prisma.tripChatMessage.create({
     data: {
       tripId,
-      userId: session.user.id,
+      userId: authUser.id,
       body: body || null,
       imageUrl: imageUrl || null,
     },

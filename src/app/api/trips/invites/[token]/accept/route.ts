@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { createTripEvent } from "@/lib/tripEvents";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id || !session.user.email) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id || !authUser.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -29,14 +29,14 @@ export async function POST(
     });
     return NextResponse.json({ error: "Invite expired" }, { status: 400 });
   }
-  if (invite.email.toLowerCase() !== session.user.email.toLowerCase()) {
+  if (invite.email.toLowerCase() !== authUser.email.toLowerCase()) {
     return NextResponse.json({ error: "Invite email mismatch" }, { status: 403 });
   }
 
   await prisma.tripMember.upsert({
-    where: { tripId_userId: { tripId: invite.tripId, userId: session.user.id } },
+    where: { tripId_userId: { tripId: invite.tripId, userId: authUser.id } },
     update: { role: invite.role },
-    create: { tripId: invite.tripId, userId: session.user.id, role: invite.role },
+    create: { tripId: invite.tripId, userId: authUser.id, role: invite.role },
   });
   await prisma.tripInvite.update({
     where: { id: invite.id },
@@ -45,9 +45,9 @@ export async function POST(
   await createTripEvent(
     invite.tripId,
     "trip.invite.accepted",
-    { inviteId: invite.id, userId: session.user.id, role: invite.role },
-    session.user.id,
-    session.user.name ?? null
+    { inviteId: invite.id, userId: authUser.id, role: invite.role },
+    authUser.id,
+    authUser.name ?? null
   );
 
   return NextResponse.json({ success: true, tripId: invite.tripId, role: invite.role });

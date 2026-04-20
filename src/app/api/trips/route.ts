@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { createTripEvent } from "@/lib/tripEvents";
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
+export async function GET(request: NextRequest) {
+  const authUser = await getApiUser(request);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -13,8 +13,8 @@ export async function GET() {
   const myTrips = await prisma.trip.findMany({
     where: {
       OR: [
-        { userId: session.user.id },
-        { members: { some: { userId: session.user.id } } },
+        { userId: authUser.id },
+        { members: { some: { userId: authUser.id } } },
       ],
     },
     include: {
@@ -22,7 +22,7 @@ export async function GET() {
       dayPlans: { orderBy: { day: "asc" } },
       _count: { select: { savedPlaces: true, members: true } },
       members: {
-        where: { userId: session.user.id },
+        where: { userId: authUser.id },
         select: { role: true },
       },
     },
@@ -50,8 +50,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         name:
           typeof name === "string" && name.trim().length > 0 ? name.trim() : "Untitled",
         description,
-        userId: session.user.id,
+        userId: authUser.id,
         optimizerDayStartMinutes,
         optimizerDayEndMinutes,
         optimizerDefaultVisitMinutes,
@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
         },
         members: {
           create: {
-            userId: session.user.id,
+            userId: authUser.id,
             role: "OWNER",
           },
         },
@@ -151,8 +151,8 @@ export async function POST(req: NextRequest) {
       trip.id,
       "trip.created",
       { name: trip.name, waypointCount: trip.waypoints.length },
-      session.user.id,
-      session.user.name ?? null
+      authUser.id,
+      authUser.name ?? null
     );
 
     return NextResponse.json(trip, { status: 201 });

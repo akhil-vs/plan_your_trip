@@ -1,26 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
 import { canUseCollaboration } from "@/lib/subscription";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro to manage collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access) {
     return NextResponse.json({ error: "Itinerary not found" }, { status: 404 });
   }
@@ -55,18 +55,18 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!canUseCollaboration(session.user.plan)) {
+  if (!canUseCollaboration(authUser.plan)) {
     return NextResponse.json(
       { error: "Upgrade to Pro to manage collaborators" },
       { status: 402 }
     );
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -96,8 +96,8 @@ export async function POST(
     tripId,
     "trip.member.upserted",
     { userId: user.id, email: user.email, role },
-    session.user.id,
-    session.user.name ?? null
+    authUser.id,
+    authUser.name ?? null
   );
   return NextResponse.json(member);
 }
@@ -106,12 +106,12 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ tripId: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const authUser = await getApiUser(req);
+  if (!authUser?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { tripId } = await params;
-  const access = await getTripAccess(tripId, session.user.id);
+  const access = await getTripAccess(tripId, authUser.id);
   if (!access || !canManageTrip(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -128,8 +128,8 @@ export async function DELETE(
     tripId,
     "trip.member.removed",
     { userId },
-    session.user.id,
-    session.user.name ?? null
+    authUser.id,
+    authUser.name ?? null
   );
   return NextResponse.json({ success: true });
 }
