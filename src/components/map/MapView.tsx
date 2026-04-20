@@ -19,6 +19,7 @@ interface MapViewProps {
 
 export function MapView({ mapboxToken }: MapViewProps) {
   const mapRef = useRef<MapRef>(null);
+  const hasAutoFittedRouteRef = useRef(false);
   const {
     viewState,
     setViewState,
@@ -30,6 +31,8 @@ export function MapView({ mapboxToken }: MapViewProps) {
   const insertWaypointNear = useTripStore((s) => s.insertWaypointNear);
   const addWaypoint = useTripStore((s) => s.addWaypoint);
   const waypoints = useTripStore((s) => s.waypoints);
+  const route = useTripStore((s) => s.route);
+  const tripId = useTripStore((s) => s.tripId);
 
   const handleMove = useCallback(
     (evt: { viewState: typeof viewState }) => {
@@ -71,6 +74,54 @@ export function MapView({ mapboxToken }: MapViewProps) {
       window.removeEventListener("resize", onResize);
     };
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    // New or reset planner session should allow one auto-fit again.
+    hasAutoFittedRouteRef.current = false;
+  }, [tripId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || hasAutoFittedRouteRef.current) return;
+
+    const routeCoords = route?.geometry?.coordinates;
+    if (!routeCoords || routeCoords.length < 2) return;
+
+    let minLng = Number.POSITIVE_INFINITY;
+    let minLat = Number.POSITIVE_INFINITY;
+    let maxLng = Number.NEGATIVE_INFINITY;
+    let maxLat = Number.NEGATIVE_INFINITY;
+
+    for (const point of routeCoords) {
+      const [lng, lat] = point;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+
+    if (
+      !Number.isFinite(minLng) ||
+      !Number.isFinite(minLat) ||
+      !Number.isFinite(maxLng) ||
+      !Number.isFinite(maxLat)
+    ) {
+      return;
+    }
+
+    map.fitBounds(
+      [
+        [minLng, minLat],
+        [maxLng, maxLat],
+      ],
+      {
+        padding: 56,
+        duration: 650,
+      }
+    );
+    hasAutoFittedRouteRef.current = true;
+  }, [route]);
 
   return (
     <div className="map-view-root relative w-full h-full min-h-0 overflow-hidden">
