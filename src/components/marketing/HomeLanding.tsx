@@ -16,6 +16,7 @@ import {
   Compass,
   Globe,
   Star,
+  Smartphone,
 } from "lucide-react";
 
 const features = [
@@ -60,6 +61,9 @@ const features = [
 export function HomeLanding() {
   const { status } = useSession();
   const isAuthed = status === "authenticated";
+  const androidAppUrl =
+    process.env.NEXT_PUBLIC_ANDROID_APP_URL ??
+    "https://play.google.com/store/apps/details?id=com.viazo.app";
 
   return (
     <div className="min-h-screen font-sans">
@@ -327,7 +331,7 @@ export function HomeLanding() {
                 <p className="text-base sm:text-lg text-white/95 mb-8 text-pretty">
                   {isAuthed
                     ? "Jump back to your trips or start a new itinerary in the planner."
-                    : "Create an account in a minute—no credit card to sketch your first route and stops in the planner."}
+                    : "Create an account with Google, Apple, or email—no credit card needed to sketch your first route and stops in the planner."}
                 </p>
                 {status === "loading" ? (
                   <div className="mx-auto h-14 max-w-xs rounded-lg bg-white/30 animate-pulse sm:max-w-sm" />
@@ -361,6 +365,43 @@ export function HomeLanding() {
                     </Button>
                   </Link>
                 )}
+              </div>
+            </FadeIn>
+          </div>
+        </section>
+
+        {/* Android app */}
+        <section className="py-14 sm:py-16 px-4 bg-white border-t border-gray-100" aria-labelledby="android-heading">
+          <div className="max-w-7xl mx-auto">
+            <FadeIn>
+              <div className="rounded-2xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 via-white to-blue-50 p-6 sm:p-8 lg:p-10">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                  <div className="max-w-2xl">
+                    <h2 id="android-heading" className="text-2xl sm:text-3xl font-bold text-gray-900 font-display">
+                      Plan on web, continue on Android
+                    </h2>
+                    <p className="mt-3 text-slate-600 text-pretty">
+                      Install the Android app to access your trips on the go. Your routes, saved places, and collaborators
+                      stay in sync with the same Viazo account.
+                    </p>
+                    <p className="mt-2 text-sm text-slate-500">
+                      Sign in with Google, Apple, or email/password across both web and mobile.
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                    <a href={androidAppUrl} target="_blank" rel="noreferrer">
+                      <Button size="lg" className="w-full sm:w-auto min-w-[200px]">
+                        <Smartphone className="h-4 w-4 mr-2" aria-hidden />
+                        Install Android app
+                      </Button>
+                    </a>
+                    <Link href="/auth/register">
+                      <Button size="lg" variant="outline" className="w-full sm:w-auto min-w-[200px] border-gray-300">
+                        Create account
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
               </div>
             </FadeIn>
           </div>

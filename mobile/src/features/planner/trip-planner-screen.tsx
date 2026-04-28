@@ -1,5 +1,6 @@
 import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
 import { useQuery } from "@tanstack/react-query";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as FileSystem from "expo-file-system/legacy";
@@ -18,6 +19,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Mapbox from "@rnmapbox/maps";
 import DraggableFlatList, { type RenderItemParams } from "react-native-draggable-flatlist";
 import { buildTripUpdateBody } from "@/lib/trip-payload";
@@ -106,6 +108,7 @@ const toLngLat = (location: unknown): [number, number] | null => {
 };
 
 export function TripPlannerScreen({ tripId }: Props) {
+  const insets = useSafeAreaInsets();
   const sheetRef = useRef<BottomSheet>(null);
   const cameraRef = useRef<React.ComponentRef<typeof Mapbox.Camera>>(null);
   const [currentLocation, setCurrentLocation] = useState<[number, number] | null>(null);
@@ -113,7 +116,9 @@ export function TripPlannerScreen({ tripId }: Props) {
   const [pickMode, setPickMode] = useState(false);
   const [queued, setQueued] = useState<LocationSearchResult[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [sheetIndex, setSheetIndex] = useState(0);
+  const isSheetExpanded = sheetIndex > 0;
   const [myLocationFocused, setMyLocationFocused] = useState(false);
   const [poiSearchText, setPoiSearchText] = useState("");
   const [suggesting, setSuggesting] = useState(false);
@@ -388,6 +393,12 @@ export function TripPlannerScreen({ tripId }: Props) {
   );
   const isTripPublished = Boolean(trip?.isPublic);
   const isTripFinalized = trip?.status === "FINALIZED";
+  useEffect(() => {
+    if (!isTripFinalized) return;
+    setSearchExpanded(false);
+    setMenuOpen(false);
+    setShareMenuOpen(false);
+  }, [isTripFinalized]);
   const imperialDistance = useMemo(() => usesImperialDistance(), []);
   const readableDuration = useMemo(
     () => formatDurationReadable(routeSummary?.duration ?? 0),
@@ -602,6 +613,29 @@ export function TripPlannerScreen({ tripId }: Props) {
       });
     }
     setMyLocationFocused(false);
+  };
+  const handlePublishToggle = async () => {
+    if (!trip) return;
+    try {
+      setPublishToggleLoading(true);
+      if (isTripPublished) {
+        await api.unpublishTrip(tripId);
+        Alert.alert("Trip is now private");
+      } else {
+        if (!isTripFinalized) {
+          Alert.alert("Finalize required", "Finalize this trip before publishing/sharing.");
+          return;
+        }
+        const result = await api.publishTrip(tripId);
+        Alert.alert("Share link", result.shareUrl);
+      }
+      await refetch();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      Alert.alert(isTripPublished ? "Unpublish failed" : "Publish failed", message);
+    } finally {
+      setPublishToggleLoading(false);
+    }
   };
   useEffect(() => {
     if (!poiVM.state.activeChip || poiVM.state.poiResults.length === 0) return;
@@ -824,8 +858,13 @@ export function TripPlannerScreen({ tripId }: Props) {
         style={[
           styles.topSearch,
           {
+            top: Math.max(insets.top + 8, 44),
             maxHeight:
-              searchExpanded
+              isTripFinalized
+                ? 56
+                : isSheetExpanded
+                ? 152
+                : searchExpanded
                 ? 520
                 : sheetIndex === 0
                 ? menuOpen
@@ -837,6 +876,14 @@ export function TripPlannerScreen({ tripId }: Props) {
           },
         ]}
       >
+        {isTripFinalized ? (
+          <View style={styles.topBackOnlyWrap}>
+            <Pressable style={styles.backCircleBtn} onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={18} color="#334155" />
+            </Pressable>
+          </View>
+        ) : (
+          <>
         {notice ? (
           <View
             style={[
@@ -849,68 +896,58 @@ export function TripPlannerScreen({ tripId }: Props) {
             <Text style={styles.noticeText}>{notice.text}</Text>
           </View>
         ) : null}
-        <View style={styles.searchWrap}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {CATEGORY_OPTIONS.map((category) => {
-              const active = poiVM.state.activeChip === category.key;
-              return (
-                <Pressable
-                  key={category.key}
-                  style={[styles.categoryChip, active && styles.categoryChipActive]}
-                  onPress={() => {
-                    clearSuggestionState();
-                    setSelectedSearchLocation(null);
-                    poiVM.actions.onChipSelected(category.key);
-                  }}
-                >
-                  <Text style={[styles.categoryChipText, active && styles.categoryChipTextActive]}>
-                    {category.emoji} {category.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          <Pressable
-            style={styles.menuTrigger}
-            onPress={() => setMenuOpen((v) => !v)}
-          >
-            <Text style={styles.menuTriggerText}>⋮</Text>
+        <View style={styles.searchBarRow}>
+          <Pressable style={styles.backCircleBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={18} color="#334155" />
           </Pressable>
-        </View>
-        <View style={styles.searchInputRow}>
-          <TextInput
-            ref={searchInputRef}
-            style={[styles.searchInput, { flex: 1 }]}
-            placeholder={searchIntent === "ADD_STOP" ? "Add stop" : "Search destination or POI"}
-            value={poiSearchText}
-            onChangeText={setPoiSearchText}
-            onFocus={() => {
-              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-              setSearchExpanded(true);
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-          />
-          {waypoints.length > 0 ? (
-            <Pressable
-              style={[styles.secondaryChipBtn, searchIntent === "ADD_STOP" && styles.secondaryChipBtnActive]}
-              onPress={() => {
-                setSearchIntent((prev) => (prev === "ADD_STOP" ? "DESTINATION" : "ADD_STOP"));
+          <View style={styles.searchInputRow}>
+            <Ionicons name="shield-checkmark-outline" size={18} color="#2563eb" />
+            <TextInput
+              ref={searchInputRef}
+              style={[styles.searchInput, { flex: 1 }]}
+              placeholder={searchIntent === "ADD_STOP" ? "Add stop to itinerary..." : "Add stop to itinerary..."}
+              value={poiSearchText}
+              onChangeText={setPoiSearchText}
+              onFocus={() => {
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 setSearchExpanded(true);
               }}
-            >
-              <Text style={[styles.secondaryChipText, searchIntent === "ADD_STOP" && styles.secondaryChipTextActive]}>
-                Add stop
-              </Text>
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {poiSearchText.trim().length > 0 ? (
+              <Pressable style={styles.clearSearchBtn} onPress={resetSearchUi}>
+                <Ionicons name="close" size={14} color="#64748b" />
+              </Pressable>
+            ) : null}
+            <Pressable style={styles.voiceBtn} onPress={() => notify("info", "Voice search coming soon.")}>
+              <Ionicons name="mic-outline" size={18} color="#334155" />
             </Pressable>
-          ) : null}
-          {poiSearchText.trim().length > 0 ? (
-            <Pressable style={styles.clearSearchBtn} onPress={resetSearchUi}>
-              <Text style={styles.clearSearchBtnText}>Clear</Text>
-            </Pressable>
-          ) : null}
+          </View>
         </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScrollContent}>
+          {CATEGORY_OPTIONS.map((category) => {
+            const active = poiVM.state.activeChip === category.key;
+            return (
+              <Pressable
+                key={category.key}
+                style={[styles.categoryChip, active && styles.categoryChipActive]}
+                onPress={() => {
+                  clearSuggestionState();
+                  setSelectedSearchLocation(null);
+                  poiVM.actions.onChipSelected(category.key);
+                }}
+              >
+                <Text style={[styles.categoryChipText, active && styles.categoryChipTextActive]}>
+                  {category.emoji} {category.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        {!isSheetExpanded ? (
+          <>
         {searchExpanded && recentSearches.length > 0 && poiSearchText.trim().length < 2 ? (
           <View style={styles.recentSearchesWrap}>
             <Text style={styles.searchSectionTitle}>Recent</Text>
@@ -1259,6 +1296,10 @@ export function TripPlannerScreen({ tripId }: Props) {
             ))}
           </View>
         ) : null}
+          </>
+        ) : null}
+          </>
+        )}
       </View>
       {sheetIndex === 0 ? (
         <Pressable
@@ -1277,178 +1318,201 @@ export function TripPlannerScreen({ tripId }: Props) {
 
       <BottomSheet
         ref={sheetRef}
-        snapPoints={["22%", "68%"]}
+        snapPoints={["34%", "78%"]}
         index={0}
         enableContentPanningGesture
         onChange={(idx) => setSheetIndex(idx)}
+        handleIndicatorStyle={styles.sheetHandle}
+        backgroundStyle={styles.sheetBackground}
       >
         <BottomSheetView style={styles.sheet}>
-          <Text style={styles.sheetTitle}>{trip?.name ?? "Trip planner"}</Text>
-          <Text style={styles.sheetMeta}>
-            {waypoints.length} stops • {readableDistance} • {readableDuration}
-          </Text>
-          <View style={styles.row}>
-            <Pressable
-              style={[styles.smallBtn, isTripFinalized ? styles.smallBtnNeutral : styles.smallBtnSuccess]}
-              disabled={finalizeLoading || publishToggleLoading || !trip}
-              onPress={async () => {
-                if (!trip) return;
-                try {
-                  setFinalizeLoading(true);
-                  if (isTripFinalized) {
-                    await api.unfinalizeTrip(tripId);
-                    notify("info", "Trip moved back to draft.");
-                  } else {
-                    await api.finalizeTrip(tripId);
-                    notify("success", "Trip finalized. You can now publish.");
-                  }
-                  await refetch();
-                } catch (error) {
-                  Alert.alert(isTripFinalized ? "Unfinalize failed" : "Finalize failed", String(error));
-                } finally {
-                  setFinalizeLoading(false);
-                }
-              }}
-            >
-              <Text style={styles.smallBtnText}>
-                {finalizeLoading
-                  ? isTripFinalized
-                    ? "Unfinalizing..."
-                    : "Finalizing..."
-                  : isTripFinalized
-                    ? "Unfinalize"
-                    : "Finalize"}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.smallBtn,
-                isTripPublished ? styles.smallBtnDanger : styles.smallBtnSuccess,
-                !isTripFinalized && styles.smallBtnDisabled,
-              ]}
-              disabled={publishToggleLoading || finalizeLoading || !isTripFinalized}
-              onPress={async () => {
-                if (!trip) return;
-                try {
-                  setPublishToggleLoading(true);
-                  if (isTripPublished) {
-                    await api.unpublishTrip(tripId);
-                    Alert.alert("Trip is now private");
-                  } else {
-                    const result = await api.publishTrip(tripId);
-                    Alert.alert("Share link", result.shareUrl);
-                  }
-                  await refetch();
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : String(error);
-                  if (!isTripFinalized && !isTripPublished) {
-                    Alert.alert("Finalize required", "Finalize this trip before publishing/sharing.");
-                  } else {
-                    Alert.alert(isTripPublished ? "Unpublish failed" : "Publish failed", message);
-                  }
-                } finally {
-                  setPublishToggleLoading(false);
-                }
-              }}
-            >
-              <Text style={styles.smallBtnText}>
-                {publishToggleLoading
-                  ? isTripPublished
-                    ? "Unpublishing..."
-                    : "Publishing..."
-                  : isTripPublished
-                    ? "Unpublish"
-                    : isTripFinalized
-                      ? "Publish"
-                      : "Publish (Finalize first)"}
-              </Text>
-            </Pressable>
-          </View>
-          <View style={styles.row}>
-            <Pressable
-              style={[styles.smallBtn, styles.smallBtnWhatsApp]}
-              disabled={shareLoading || pdfLoading || finalizeLoading || publishToggleLoading || !trip}
-              onPress={() => {
-                void shareOnWhatsApp();
-              }}
-            >
-              <Text style={styles.smallBtnText}>{shareLoading ? "Sharing..." : "Share via WhatsApp"}</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.smallBtn, styles.smallBtnPdf, (!isTripFinalized || pdfLoading) && styles.smallBtnDisabled]}
-              disabled={pdfLoading || shareLoading || !isTripFinalized}
-              onPress={() => {
-                void shareDetailedPdf();
-              }}
-            >
-              <Text style={styles.smallBtnText}>
-                {pdfLoading ? "Preparing PDF..." : "Share detailed PDF"}
-              </Text>
-            </Pressable>
-          </View>
-          <Text style={styles.dragHint}>Press and drag the handle to reorder stops.</Text>
-          <DraggableFlatList
-            data={dragListData}
-            keyExtractor={(item) => item.__dragKey}
-            containerStyle={styles.stopList}
-            contentContainerStyle={styles.stopListContent}
-            activationDistance={0}
-            onDragEnd={({ data }) => {
-              const normalized: Waypoint[] = data.map(({ ...item }, idx) => {
-                const { __dragKey, ...wp } = item;
-                void __dragKey;
-                return {
-                ...wp,
-                order: idx,
-                };
-              });
-              void persistWaypoints(normalized);
-            }}
-            renderItem={({ item, drag, isActive, getIndex }: RenderItemParams<(Waypoint & { __dragKey: string })>) => {
-              const idx = getIndex() ?? 0;
-              const nextWaypoint = waypoints[idx + 1];
-              const legDistanceLabel = nextWaypoint
-                ? formatDistanceReadable(
-                    geoDistanceMeters([item.lng, item.lat], [nextWaypoint.lng, nextWaypoint.lat]),
-                    imperialDistance
-                  )
-                : null;
-              return (
-                <View style={[styles.stopRow, isActive && styles.stopRowActive]}>
-                  <Pressable style={styles.dragHandle} onPressIn={drag}>
-                    <Text style={styles.dragHandleText}>≡</Text>
-                  </Pressable>
-                  <View style={styles.stopNameBlock}>
-                    <Text style={[styles.stop, styles.stopName]}>{idx + 1}. {item.name}</Text>
-                    <Text style={styles.stopMeta}>
-                      {legDistanceLabel ? `${legDistanceLabel} to next stop` : "Final stop"}
-                    </Text>
-                  </View>
+          <View style={styles.sheetHeaderRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.sheetTitleRow}>
+                <View style={styles.sheetTitleBadge}>
+                  <Text style={styles.sheetTitle}>{trip?.name ?? "Trip planner"}</Text>
+                </View>
+                <View style={styles.sheetTitleActions}>
                   <Pressable
-                    style={styles.removeStopBtn}
-                    onPress={() => {
-                      Alert.alert("Remove stop", `Remove \"${item.name}\" from this itinerary?`, [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Remove",
-                          style: "destructive",
-                          onPress: async () => {
-                            const next = waypoints
-                              .filter((_, i) => i !== idx)
-                              .map((point, order) => ({ ...point, order }));
-                            await persistWaypoints(next);
-                            notify("info", "Stop removed.");
-                          },
-                        },
-                      ]);
+                    style={[styles.iconBtn, styles.headerMembersBtn]}
+                    onPress={() => router.push(`/planner/${tripId}/collaboration`)}
+                  >
+                    <Ionicons name="people-outline" size={17} color="#ffffff" />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.titleLockBtn, isTripFinalized ? styles.smallBtnNeutral : styles.smallBtnSuccess]}
+                    disabled={finalizeLoading || publishToggleLoading || !trip}
+                    onPress={async () => {
+                      if (!trip) return;
+                      try {
+                        setFinalizeLoading(true);
+                        if (isTripFinalized) {
+                          await api.unfinalizeTrip(tripId);
+                          notify("info", "Trip moved back to draft.");
+                        } else {
+                          await api.finalizeTrip(tripId);
+                          notify("success", "Trip finalized. You can now publish.");
+                        }
+                        await refetch();
+                      } catch (error) {
+                        Alert.alert(isTripFinalized ? "Unfinalize failed" : "Finalize failed", String(error));
+                      } finally {
+                        setFinalizeLoading(false);
+                      }
                     }}
                   >
-                    <Text style={styles.removeStopIcon}>X</Text>
+                    <View style={styles.smallBtnContent}>
+                      <Ionicons
+                        name={isTripFinalized ? "lock-open-outline" : "lock-closed-outline"}
+                        size={14}
+                        color="#ffffff"
+                      />
+                      <Text style={styles.titleLockText}>
+                        {finalizeLoading ? (isTripFinalized ? "Unlocking..." : "Locking...") : isTripFinalized ? "Unlock" : "Lock"}
+                      </Text>
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.iconBtn,
+                      styles.headerShareBtn,
+                      (publishToggleLoading || shareLoading || pdfLoading) && styles.smallBtnDisabled,
+                    ]}
+                    disabled={publishToggleLoading || finalizeLoading || !trip}
+                    onPress={() => setShareMenuOpen((prev) => !prev)}
+                  >
+                    <Ionicons
+                      name={publishToggleLoading || shareLoading || pdfLoading ? "time-outline" : "share-outline"}
+                      size={18}
+                      color="#ffffff"
+                    />
                   </Pressable>
                 </View>
-              );
-            }}
-          />
+              </View>
+              {shareMenuOpen ? (
+                <View style={styles.shareInlineRow}>
+                  <Pressable
+                    style={styles.shareInlineAction}
+                    disabled={publishToggleLoading || shareLoading}
+                    onPress={() => {
+                      setShareMenuOpen(false);
+                      void handlePublishToggle();
+                    }}
+                  >
+                    <Ionicons name="cloud-upload-outline" size={14} color="#2563eb" />
+                    <Text style={styles.shareInlineText}>{isTripPublished ? "Unpublish" : "Publish"}</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.shareInlineAction}
+                    disabled={shareLoading}
+                    onPress={() => {
+                      setShareMenuOpen(false);
+                      void shareOnWhatsApp();
+                    }}
+                  >
+                    <Ionicons name="logo-whatsapp" size={14} color="#16a34a" />
+                    <Text style={styles.shareInlineText}>WhatsApp</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.shareInlineAction}
+                    onPress={() => {
+                      setShareMenuOpen(false);
+                      void shareDetailedPdf();
+                    }}
+                  >
+                    <Ionicons name="document-text-outline" size={14} color="#ef4444" />
+                    <Text style={styles.shareInlineText}>PDF</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              <View style={styles.metricsRow}>
+                <View style={styles.metricPill}>
+                  <Ionicons name="location-outline" size={13} color="#1d4ed8" />
+                  <Text style={styles.metricText}>
+                    {waypoints.length} {waypoints.length === 1 ? "stop" : "stops"}
+                  </Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Ionicons name="navigate-outline" size={13} color="#1d4ed8" />
+                  <Text style={styles.metricText}>{readableDistance}</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Ionicons name="time-outline" size={13} color="#1d4ed8" />
+                  <Text style={styles.metricText}>{readableDuration}</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+          {isSheetExpanded ? (
+            <>
+              <Text style={styles.dragHint}>Press and drag to reorder stops.</Text>
+              <DraggableFlatList
+                data={dragListData}
+                keyExtractor={(item) => item.__dragKey}
+                containerStyle={styles.stopList}
+                contentContainerStyle={styles.stopListContent}
+                activationDistance={0}
+                onDragEnd={({ data }) => {
+                  const normalized: Waypoint[] = data.map(({ ...item }, idx) => {
+                    const { __dragKey, ...wp } = item;
+                    void __dragKey;
+                    return {
+                    ...wp,
+                    order: idx,
+                    };
+                  });
+                  void persistWaypoints(normalized);
+                }}
+                renderItem={({ item, drag, isActive, getIndex }: RenderItemParams<(Waypoint & { __dragKey: string })>) => {
+                  const idx = getIndex() ?? 0;
+                  const nextWaypoint = waypoints[idx + 1];
+                  const legDistanceLabel = nextWaypoint
+                    ? formatDistanceReadable(
+                        geoDistanceMeters([item.lng, item.lat], [nextWaypoint.lng, nextWaypoint.lat]),
+                        imperialDistance
+                      )
+                    : null;
+                  return (
+                    <View style={[styles.stopRow, isActive && styles.stopRowActive]}>
+                      <Pressable style={styles.dragHandle} onPressIn={drag}>
+                        <Ionicons name="reorder-three-outline" size={16} color="#94a3b8" />
+                      </Pressable>
+                      <View style={styles.timelineNode}>
+                        <Text style={styles.timelineNodeText}>{idx + 1}</Text>
+                      </View>
+                      <View style={styles.stopNameBlock}>
+                        <Text style={[styles.stop, styles.stopName]}>{item.name}</Text>
+                        <Text style={styles.stopMeta}>
+                          {legDistanceLabel ? `${legDistanceLabel} to next stop` : "Final stop"}
+                        </Text>
+                      </View>
+                      <Pressable
+                        style={styles.removeStopBtn}
+                        onPress={() => {
+                          Alert.alert("Remove stop", `Remove \"${item.name}\" from this itinerary?`, [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Remove",
+                              style: "destructive",
+                              onPress: async () => {
+                                const next = waypoints
+                                  .filter((_, i) => i !== idx)
+                                  .map((point, order) => ({ ...point, order }));
+                                await persistWaypoints(next);
+                                notify("info", "Stop removed.");
+                              },
+                            },
+                          ]);
+                        }}
+                      >
+                        <Ionicons name="close" size={18} color="#94a3b8" />
+                      </Pressable>
+                    </View>
+                  );
+                }}
+              />
+            </>
+          ) : null}
         </BottomSheetView>
       </BottomSheet>
     </View>
@@ -1468,22 +1532,14 @@ const styles = StyleSheet.create({
   },
   topSearch: {
     position: "absolute",
-    top: 56,
     left: 12,
     right: 12,
     zIndex: 50,
     gap: 8,
-    backgroundColor: "rgba(219,234,254,0.46)",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(148,163,184,0.35)",
-    padding: 10,
+    backgroundColor: "transparent",
+    borderRadius: 16,
+    padding: 0,
     overflow: "hidden",
-    shadowColor: "#0f172a",
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
   },
   resultsList: { flexGrow: 1 },
   resultsListContent: { gap: 6, paddingBottom: 2, flexGrow: 1 },
@@ -1504,14 +1560,114 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   activeMarker: { backgroundColor: "#f97316" },
-  sheet: { padding: 16, gap: 8 },
-  sheetTitle: { fontSize: 18, fontWeight: "700" },
-  sheetMeta: { color: "#6b7280", marginBottom: 6 },
-  dragHint: { color: "#6b7280", fontSize: 12, marginBottom: 4 },
+  sheet: { paddingHorizontal: 14, paddingBottom: 12, gap: 8 },
+  sheetBackground: {
+    backgroundColor: "#f3f4f6",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+  },
+  sheetHandle: {
+    width: 44,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#cbd5e1",
+  },
+  sheetHeaderRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 },
+  sheetTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  sheetTitleActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sheetTitleBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 10,
+    backgroundColor: "#dbeafe",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  headerShareBtn: { backgroundColor: "#0b66d5", borderColor: "#0b66d5" },
+  headerMembersBtn: { backgroundColor: "#2563eb", borderColor: "#2563eb" },
+  shareInlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: "nowrap",
+  },
+  shareInlineAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#dbeafe",
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  shareInlineText: { color: "#475569", fontSize: 12, fontWeight: "600" },
+  titleLockBtn: {
+    borderRadius: 999,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.2,
+  },
+  titleLockText: { color: "#fff", fontWeight: "500", fontSize: 12 },
+  sheetTitle: { fontSize: 16, fontWeight: "700", color: "#1e3a8a" },
+  metricsRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" },
+  metricPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#dbeafe",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  metricText: { fontSize: 12, fontWeight: "600", color: "#334155" },
+  dragHint: { color: "#6b7280", fontSize: 12, marginBottom: 2 },
   stopList: { flexGrow: 0, minHeight: 120 },
-  stopListContent: { paddingBottom: 28 },
+  stopListContent: { paddingBottom: 18, gap: 8 },
   searchWrap: { flexDirection: "row", gap: 8, alignItems: "center" },
-  searchInputRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  searchBarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  backCircleBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.98)",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  topBackOnlyWrap: { minHeight: 52, justifyContent: "center" },
+  searchInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    gap: 8,
+    minHeight: 52,
+    borderRadius: 26,
+    backgroundColor: "rgba(255,255,255,0.98)",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 14,
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
   modeTabs: { flexDirection: "row", gap: 8 },
   modeTab: {
     borderWidth: 1,
@@ -1531,24 +1687,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#d1d5db",
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
     backgroundColor: "#fff",
   },
+  categoryScrollContent: { gap: 8, paddingHorizontal: 2 },
   categoryChipActive: { borderColor: "#2563eb", backgroundColor: "#eff6ff" },
   categoryChipText: { fontSize: 12, color: "#374151", fontWeight: "600" },
   categoryChipTextActive: { color: "#1d4ed8" },
   searchInput: {
     width: "100%",
-    borderWidth: 1,
-    borderColor: "rgba(15,23,42,0.16)",
     borderRadius: 10,
-    height: 36,
-    paddingHorizontal: 10,
+    height: 40,
+    paddingHorizontal: 2,
     paddingVertical: 0,
-    backgroundColor: "rgba(191,219,254,0.22)",
+    backgroundColor: "transparent",
     color: "#0f172a",
-    fontSize: 13,
+    fontSize: 14,
   },
   searchHint: { color: "#6b7280", fontSize: 12, marginBottom: 2 },
   scrollHint: { color: "#475569", fontSize: 11, fontWeight: "600", textAlign: "center", marginTop: 2 },
@@ -1628,16 +1783,22 @@ const styles = StyleSheet.create({
   secondaryChipText: { color: "#1e293b", fontWeight: "700", fontSize: 12 },
   secondaryChipTextActive: { color: "#1d4ed8" },
   clearSearchBtn: {
-    borderRadius: 8,
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    height: 34,
-    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: "#f8fafc",
+    height: 26,
+    width: 26,
     alignItems: "center",
     justifyContent: "center",
   },
-  clearSearchBtnText: { color: "#334155", fontWeight: "700", fontSize: 12 },
+  voiceBtn: {
+    width: 30,
+    height: 30,
+    borderLeftWidth: 1,
+    borderLeftColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingLeft: 8,
+  },
   queuedBlock: { gap: 4, marginTop: 2 },
   queuedRow: {
     flexDirection: "row",
@@ -1654,65 +1815,64 @@ const styles = StyleSheet.create({
   removeText: { color: "#2563eb", fontWeight: "600", fontSize: 12 },
   stop: { fontSize: 14 },
   stopNameBlock: { flex: 1 },
-  stopName: { flex: 1 },
-  stopMeta: { marginTop: 1, fontSize: 11, color: "#64748b", fontWeight: "500" },
-  stopRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 2 },
+  stopName: { flex: 1, fontSize: 34 / 2, fontWeight: "500", color: "#1f2937" },
+  stopMeta: { marginTop: 1, fontSize: 30 / 2, color: "#3b82f6", fontWeight: "600" },
+  stopRow: { flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 4 },
   stopRowActive: {
     backgroundColor: "#eff6ff",
     borderRadius: 10,
     paddingHorizontal: 6,
   },
   dragHandle: {
-    width: 26,
-    height: 30,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
+    width: 20,
+    height: 24,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff",
   },
+  timelineNode: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#dbeafe",
+  },
+  timelineNodeText: { fontSize: 13, color: "#1e3a8a", fontWeight: "700" },
   dragHandleText: { fontSize: 14, fontWeight: "700", color: "#374151" },
   removeStopBtn: {
     marginLeft: 2,
-    minWidth: 30,
-    height: 30,
-    borderWidth: 1,
-    borderColor: "#fecaca",
-    backgroundColor: "#fff1f2",
+    minWidth: 28,
+    height: 28,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
   },
-  removeStopIcon: { color: "#b91c1c", fontWeight: "800", fontSize: 13 },
+  removeStopIcon: { color: "#94a3b8", fontWeight: "800", fontSize: 13 },
+  sheetActionRow: { flexDirection: "row", gap: 8, alignItems: "center", flexWrap: "nowrap" },
   row: { flexDirection: "row", gap: 8, alignItems: "center" },
   smallBtn: {
-    borderRadius: 8,
-    backgroundColor: "#2563eb",
+    borderRadius: 999,
     minHeight: 36,
+    minWidth: 96,
     paddingHorizontal: 12,
     paddingVertical: 0,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1.2,
   },
-  smallBtnSuccess: { backgroundColor: "#2563eb" },
-  smallBtnDanger: { backgroundColor: "#b91c1c" },
-  smallBtnNeutral: { backgroundColor: "#475569" },
-  smallBtnWhatsApp: { backgroundColor: "#16a34a" },
-  smallBtnPdf: { backgroundColor: "#7c3aed" },
-  smallBtnDisabled: { backgroundColor: "#93c5fd" },
-  smallBtnText: { color: "#fff", fontWeight: "700", fontSize: 12 },
-  menuTrigger: {
-    minWidth: 38,
+  smallBtnContent: { flexDirection: "row", alignItems: "center", gap: 6 },
+  iconBtn: {
     height: 36,
-    borderRadius: 8,
-    backgroundColor: "#1e293b",
-    borderWidth: 1,
-    borderColor: "#334155",
+    width: 36,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1.2,
   },
-  menuTriggerText: { color: "#fff", fontWeight: "700", fontSize: 17, lineHeight: 17 },
+  smallBtnSuccess: { backgroundColor: "#0b66d5", borderColor: "#0b66d5" },
+  smallBtnNeutral: { backgroundColor: "#0b66d5", borderColor: "#0b66d5" },
+  smallBtnDisabled: { backgroundColor: "#dbeafe", borderColor: "#bfdbfe" },
+  smallBtnText: { color: "#fff", fontWeight: "500", fontSize: 13 },
   submenu: {
     marginTop: 6,
     alignSelf: "flex-end",

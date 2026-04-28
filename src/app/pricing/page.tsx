@@ -57,6 +57,10 @@ const tiers = [
 ];
 
 export default function PricingPage() {
+  const androidAppUrl =
+    process.env.NEXT_PUBLIC_ANDROID_APP_URL ??
+    "https://play.google.com/store/apps/details?id=com.viazo.app";
+
   return (
     <div className="min-h-screen bg-gray-50">
       <MarketingNav context="pricing" />
@@ -69,6 +73,9 @@ export default function PricingPage() {
           <p className="text-gray-600 mt-3 text-pretty text-base sm:text-lg">
             Free covers solo planning in the planner; Pro and Team add collaboration, exports, and controls when your
             group—or your standards—grow.
+          </p>
+          <p className="text-sm text-slate-500 mt-2">
+            Create one account and sign in with Google, Apple, or email/password on web and Android.
           </p>
         </div>
 
@@ -139,6 +146,17 @@ export default function PricingPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+        <div className="mt-10 rounded-xl border border-emerald-200 bg-emerald-50/60 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Also available on Android</h2>
+            <p className="text-sm text-slate-600 mt-1">
+              Install the app and keep your itinerary synced across devices with the same account.
+            </p>
+          </div>
+          <a href={androidAppUrl} target="_blank" rel="noreferrer">
+            <Button size="lg" className="w-full sm:w-auto min-w-[210px]">Install Android app</Button>
+          </a>
         </div>
       </main>
     </div>

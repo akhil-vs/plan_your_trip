@@ -28,6 +28,9 @@ export function MarketingNav({ context }: MarketingNavProps) {
   const { status } = useSession();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const androidAppUrl =
+    process.env.NEXT_PUBLIC_ANDROID_APP_URL ??
+    "https://play.google.com/store/apps/details?id=com.viazo.app";
 
   const close = () => setOpen(false);
   const isAuthed = status === "authenticated";
@@ -72,6 +75,14 @@ export function MarketingNav({ context }: MarketingNavProps) {
           <Link href="/pricing" className={cn(navLinkClass, "px-2")}>
             Pricing
           </Link>
+          <a
+            href={androidAppUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(navLinkClass, "px-2")}
+          >
+            Android app
+          </a>
           {status === "loading" ? (
             <div
               className="ml-1 h-9 w-[11rem] rounded-md bg-slate-200/60 animate-pulse"
@@ -129,6 +140,11 @@ export function MarketingNav({ context }: MarketingNavProps) {
                     Pricing
                   </Button>
                 </Link>
+                <a href={androidAppUrl} target="_blank" rel="noreferrer" onClick={close}>
+                  <Button variant="ghost" className="w-full justify-start h-11 text-base">
+                    Android app
+                  </Button>
+                </a>
                 {status === "loading" ? (
                   <div className="h-11 rounded-md bg-slate-200/60 animate-pulse" aria-hidden />
                 ) : isAuthed ? (
