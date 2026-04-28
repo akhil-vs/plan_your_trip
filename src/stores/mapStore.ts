@@ -123,13 +123,13 @@ export const useMapStore = create<MapState>((set) => ({
       routeSummaryOpen: routeExploreOpen ? false : s.routeSummaryOpen,
     })),
   setMembersSheetOpen: (open) =>
-    set((s) => ({
+    set({
       membersSheetOpen: open,
       ...(open ? { chatSheetOpen: false } : {}),
-    })),
+    }),
   setChatSheetOpen: (open) =>
-    set((s) => ({
+    set({
       chatSheetOpen: open,
       ...(open ? { membersSheetOpen: false } : {}),
-    })),
+    }),
 }));

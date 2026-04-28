@@ -1,0 +1,439 @@
+import { env } from "@/config/env";
+import { nativePoiDiscover } from "./poi-search-native";
+import type { DiscoverCategory } from "./mapbox-discover-categories";
+import type { POIDetail, POIFeature } from "./poi-search-model";
+import {
+  haversineMeters,
+  metersAlongRoute,
+  minDistanceToPolylineMeters,
+  samplePolyline,
+} from "./poi-search-route-utils";
+
+type LngLat = [number, number];
+
+type SearchBoxFeature = {
+  geometry?: { coordinates?: [number, number] };
+  properties?: Record<string, unknown>;
+};
+type SearchOptions = {
+  boundingBox?: [number, number, number, number];
+};
+
+const MAPBOX_SEARCH_BASE = "https://api.mapbox.com/search/searchbox/v1";
+const ROUTE_BUFFER_METERS = 500;
+const NEARBY_CACHE_DISTANCE_METERS = 500;
+const CACHE_TTL_MS = 90_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
+
+const toFeature = (feature: SearchBoxFeature): POIFeature | null => {
+  const geometry = feature.geometry;
+  const properties = asRecord(feature.properties);
+  const coords = geometry?.coordinates;
+  if (!coords || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) return null;
+  const mapboxId = String(properties.mapbox_id ?? "");
+  if (!mapboxId) return null;
+  return {
+    mapboxId,
+    name: String(properties.name_preferred ?? properties.name ?? "Unknown place"),
+    coordinates: [coords[0], coords[1]],
+    category: String(properties.feature_type ?? properties.poi_category ?? "poi"),
+    address: String(properties.place_formatted ?? properties.full_address ?? ""),
+    distanceMeters: 0,
+    routeOffsetMeters: null,
+    fullDetails: null,
+  };
+};
+
+const dedupeByMapboxId = (items: POIFeature[]) => {
+  const map = new Map<string, POIFeature>();
+  for (const item of items) {
+    if (!map.has(item.mapboxId)) map.set(item.mapboxId, item);
+  }
+  return Array.from(map.values());
+};
+
+const normalizeQuery = (categories: DiscoverCategory[]) => {
+  const ids = categories.map((c) => c.id);
+  if (ids.includes("museum") || ids.includes("park") || ids.includes("scenic_viewpoint")) return "tourist attractions";
+  if (ids.includes("gas_station")) return "gas station";
+  if (ids.includes("hotel")) return "hotels";
+  if (ids.includes("parking")) return "parking";
+  return "restaurants cafes bars";
+};
+
+const shouldUseBroadQuery = (categories: DiscoverCategory[]) => {
+  const ids = categories.map((c) => c.id);
+  // Attractions broad query often returns generic "attractions" list entries.
+  // Prefer concrete category searches for better relevance.
+  if (
+    ids.includes("museum") ||
+    ids.includes("park") ||
+    ids.includes("scenic_viewpoint") ||
+    ids.includes("historic") ||
+    ids.includes("amusement_park") ||
+    ids.includes("zoo") ||
+    ids.includes("aquarium") ||
+    ids.includes("art_gallery")
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const isAttractionsSet = (categories: DiscoverCategory[]) => {
+  const ids = categories.map((c) => c.id);
+  return (
+    ids.includes("museum") ||
+    ids.includes("park") ||
+    ids.includes("scenic_viewpoint") ||
+    ids.includes("historic") ||
+    ids.includes("amusement_park") ||
+    ids.includes("zoo") ||
+    ids.includes("aquarium") ||
+    ids.includes("art_gallery")
+  );
+};
+
+const isParkingLikePoi = (poi: POIFeature) => {
+  const hay = `${poi.name} ${poi.address} ${poi.category}`.toLowerCase();
+  return (
+    hay.includes("parking") ||
+    hay.includes("car park") ||
+    hay.includes("parking garage") ||
+    hay.includes("park and ride") ||
+    hay.includes("multi-storey")
+  );
+};
+
+const filterAttractionsNoise = (items: POIFeature[], categories: DiscoverCategory[]) => {
+  if (!isAttractionsSet(categories)) return items;
+  return items.filter((poi) => !isParkingLikePoi(poi));
+};
+
+const localBoundingBox = (location: LngLat, radiusKm = 6): [number, number, number, number] => {
+  const lat = location[1];
+  const lng = location[0];
+  const latDelta = radiusKm / 111.0;
+  const lngDelta = radiusKm / (111.0 * Math.max(Math.cos((lat * Math.PI) / 180), 0.2));
+  return [lng - lngDelta, lat - latDelta, lng + lngDelta, lat + latDelta];
+};
+
+const toSearchboxCategorySlug = (categoryId: string): string | null => {
+  switch (categoryId) {
+    case "restaurant":
+      return "restaurant";
+    case "coffee_shop_cafe":
+      return "cafe";
+    case "bar":
+      return "bar";
+    case "parking":
+      return "parking";
+    case "hotel":
+      return "hotel";
+    case "museum":
+      return "museum";
+    case "park":
+      return "park";
+    case "scenic_viewpoint":
+      return "viewpoint";
+    case "historic":
+      return "historic_site";
+    case "amusement_park":
+      return "theme_park";
+    case "zoo":
+      return "zoo";
+    case "aquarium":
+      return "aquarium";
+    case "art_gallery":
+      return "art_gallery";
+    case "gas_station":
+      return "gas_station";
+    default:
+      return null;
+  }
+};
+
+async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const response = await fetch(url);
+    if (response.status !== 429) return response;
+    if (attempt === retries) return response;
+    const backoff = 2000 * (attempt + 1);
+    await sleep(backoff);
+  }
+  return fetch(url);
+}
+
+async function fetchCategorySearchbox(
+  category: DiscoverCategory,
+  proximity: LngLat,
+  sessionToken: string,
+  limit: number,
+  options?: SearchOptions
+): Promise<POIFeature[]> {
+  const token = env.mapboxPublicToken;
+  if (!token) return [];
+  const slug = toSearchboxCategorySlug(category.id);
+  if (!slug) {
+    console.warn(`[POI] unknown category id "${category.id}"`);
+    return [];
+  }
+  const params = new URLSearchParams({
+    access_token: token,
+    proximity: `${proximity[0]},${proximity[1]}`,
+    limit: String(limit),
+    language: "en",
+    session_token: sessionToken,
+  });
+  if (options?.boundingBox) {
+    params.set("bbox", options.boundingBox.join(","));
+  }
+  const response = await fetchWithRetry(
+    `${MAPBOX_SEARCH_BASE}/category/${encodeURIComponent(slug)}?${params.toString()}`
+  );
+  if (!response.ok) {
+    console.warn(`[POI] category failed for "${slug}" (${response.status})`);
+    // Some tokens/regions reject category path lookups for otherwise valid slugs.
+    // Fallback to suggest+retrieve for the category query so chips still show data.
+    return fetchSuggestRetrieveBroad(category.id.replace(/_/g, " "), proximity, sessionToken, limit);
+  }
+  const payload = await response.json().catch(() => ({ features: [] }));
+  const features = Array.isArray(payload?.features) ? payload.features : [];
+  return features
+    .map((feature: unknown) => toFeature(feature as SearchBoxFeature))
+    .filter((v: POIFeature | null): v is POIFeature => Boolean(v));
+}
+
+async function fetchSuggestRetrieveBroad(
+  query: string,
+  proximity: LngLat,
+  sessionToken: string,
+  limit: number,
+  options?: SearchOptions
+): Promise<POIFeature[]> {
+  const token = env.mapboxPublicToken;
+  if (!token) return [];
+  const suggestParams = new URLSearchParams({
+    access_token: token,
+    q: query,
+    proximity: `${proximity[0]},${proximity[1]}`,
+    limit: String(limit),
+    language: "en",
+    session_token: sessionToken,
+    types: "poi",
+  });
+  if (options?.boundingBox) {
+    suggestParams.set("bbox", options.boundingBox.join(","));
+  }
+  const suggestResponse = await fetchWithRetry(`${MAPBOX_SEARCH_BASE}/suggest?${suggestParams.toString()}`);
+  if (!suggestResponse.ok) return [];
+  const suggestPayload = await suggestResponse.json().catch(() => ({ suggestions: [] }));
+  const suggestions = Array.isArray(suggestPayload?.suggestions) ? suggestPayload.suggestions : [];
+  const ids = suggestions
+    .map((s: unknown) => asRecord(s))
+    .map((s: Record<string, unknown>) => (typeof s.mapbox_id === "string" ? s.mapbox_id : ""))
+    .filter(Boolean)
+    .slice(0, limit) as string[];
+  const rows: POIFeature[] = [];
+  for (const id of ids) {
+    const retrieveParams = new URLSearchParams({
+      access_token: token,
+      session_token: sessionToken,
+      language: "en",
+    });
+    const retrieveResponse = await fetchWithRetry(
+      `${MAPBOX_SEARCH_BASE}/retrieve/${encodeURIComponent(id)}?${retrieveParams.toString()}`
+    );
+    if (!retrieveResponse.ok) continue;
+    const payload = await retrieveResponse.json().catch(() => ({ features: [] }));
+    const first = Array.isArray(payload?.features) ? (payload.features[0] as SearchBoxFeature) : null;
+    if (!first) continue;
+    const parsed = toFeature(first);
+    if (parsed) rows.push(parsed);
+    await sleep(120);
+  }
+  return rows;
+}
+
+type NearbyCacheEntry = { center: LngLat; data: POIFeature[]; savedAt: number };
+type RouteCacheEntry = { signature: string; data: POIFeature[]; savedAt: number };
+
+export class POISearchRepository {
+  private nearbyCache = new Map<string, NearbyCacheEntry>();
+  private routeCache = new Map<string, RouteCacheEntry>();
+
+  private isFresh(savedAt: number) {
+    return Date.now() - savedAt <= CACHE_TTL_MS;
+  }
+
+  private routeSignature(route: LngLat[]) {
+    if (!route.length) return "empty";
+    const first = route[0];
+    const mid = route[Math.floor(route.length / 2)];
+    const last = route[route.length - 1];
+    return `${route.length}:${first[0].toFixed(4)},${first[1].toFixed(4)}:${mid[0].toFixed(4)},${mid[1].toFixed(4)}:${last[0].toFixed(4)},${last[1].toFixed(4)}`;
+  }
+
+  async searchNearby(categories: DiscoverCategory[], location: LngLat, sessionToken: string): Promise<POIFeature[]> {
+    const key = categories.map((c) => c.id).sort().join("|");
+    const cached = this.nearbyCache.get(key);
+    if (
+      cached &&
+      this.isFresh(cached.savedAt) &&
+      haversineMeters(location, cached.center) <= NEARBY_CACHE_DISTANCE_METERS
+    ) {
+      return cached.data;
+    }
+
+    if (nativePoiDiscover.isAvailable()) {
+      const data = dedupeByMapboxId(
+        await nativePoiDiscover.searchNearby(
+          env.mapboxPublicToken,
+          categories.map((c) => c.id),
+          location
+        )
+      );
+      this.nearbyCache.set(key, { center: location, data, savedAt: Date.now() });
+      return data;
+    }
+
+    const selected = categories.length <= 4 ? categories : categories.slice(0, 3);
+    const results: POIFeature[] = [];
+    if (shouldUseBroadQuery(selected)) {
+      const primary = await fetchSuggestRetrieveBroad(normalizeQuery(selected), location, sessionToken, 10);
+      results.push(...primary);
+    }
+    if (results.length < 10) {
+      for (const category of selected) {
+        const batch = await fetchCategorySearchbox(category, location, sessionToken, 10);
+        results.push(...batch);
+        await sleep(300);
+      }
+    }
+    const deduped = filterAttractionsNoise(dedupeByMapboxId(results), categories);
+    this.nearbyCache.set(key, { center: location, data: deduped, savedAt: Date.now() });
+    return deduped;
+  }
+
+  async searchInArea(
+    categories: DiscoverCategory[],
+    location: LngLat,
+    sessionToken: string
+  ): Promise<POIFeature[]> {
+    const bbox = localBoundingBox(location, 6);
+    const key = `${categories.map((c) => c.id).sort().join("|")}::area::${bbox.map((v) => v.toFixed(3)).join(",")}`;
+    const cached = this.nearbyCache.get(key);
+    if (
+      cached &&
+      this.isFresh(cached.savedAt) &&
+      haversineMeters(location, cached.center) <= NEARBY_CACHE_DISTANCE_METERS
+    ) {
+      return cached.data;
+    }
+
+    const selected = categories.length <= 4 ? categories : categories.slice(0, 3);
+    const results: POIFeature[] = [];
+    if (shouldUseBroadQuery(selected)) {
+      const primary = await fetchSuggestRetrieveBroad(normalizeQuery(selected), location, sessionToken, 12, {
+        boundingBox: bbox,
+      });
+      results.push(...primary);
+    }
+    for (const category of selected) {
+      const batch = await fetchCategorySearchbox(category, location, sessionToken, 12, { boundingBox: bbox });
+      results.push(...batch);
+      await sleep(300);
+    }
+    const deduped = filterAttractionsNoise(dedupeByMapboxId(results), categories);
+    this.nearbyCache.set(key, { center: location, data: deduped, savedAt: Date.now() });
+    return deduped;
+  }
+
+  async searchAlongRoute(
+    categories: DiscoverCategory[],
+    routePolyline: LngLat[],
+    sessionToken: string
+  ): Promise<POIFeature[]> {
+    const routeKey = `${categories.map((c) => c.id).sort().join("|")}::${this.routeSignature(routePolyline)}`;
+    const cachedRoute = this.routeCache.get(routeKey);
+    if (cachedRoute && this.isFresh(cachedRoute.savedAt)) {
+      return cachedRoute.data;
+    }
+
+    if (nativePoiDiscover.isAvailable()) {
+      const nativeResults = dedupeByMapboxId(
+        await nativePoiDiscover.searchAlongRoute(
+          env.mapboxPublicToken,
+          categories.map((c) => c.id),
+          routePolyline
+        )
+      );
+      const withRouteMeta: POIFeature[] = [];
+      for (const poi of nativeResults) {
+        const dist = minDistanceToPolylineMeters(poi.coordinates, routePolyline);
+        if (!Number.isFinite(dist) || dist > ROUTE_BUFFER_METERS) continue;
+        const offset = metersAlongRoute(poi.coordinates, routePolyline);
+        withRouteMeta.push({ ...poi, distanceMeters: dist, routeOffsetMeters: offset });
+      }
+      withRouteMeta.sort(
+        (a, b) => (a.routeOffsetMeters ?? Number.POSITIVE_INFINITY) - (b.routeOffsetMeters ?? Number.POSITIVE_INFINITY)
+      );
+      const filtered = filterAttractionsNoise(withRouteMeta, categories);
+      this.routeCache.set(routeKey, { signature: routeKey, data: filtered, savedAt: Date.now() });
+      return filtered;
+    }
+    const samplePoints = samplePolyline(routePolyline, 5000, 20);
+    if (!samplePoints.length) return [];
+    const selected = categories.length <= 4 ? categories : categories.slice(0, 3);
+    const allRows: POIFeature[] = [];
+    for (const point of samplePoints) {
+      if (shouldUseBroadQuery(selected)) {
+        const broad = await fetchSuggestRetrieveBroad(normalizeQuery(selected), point, sessionToken, 5);
+        allRows.push(...broad);
+      }
+      for (const category of selected) {
+        const batch = await fetchCategorySearchbox(category, point, sessionToken, 4);
+        allRows.push(...batch);
+        await sleep(300);
+      }
+    }
+    const all = dedupeByMapboxId(allRows);
+    const withRouteMeta: POIFeature[] = [];
+    for (const poi of all) {
+      const dist = minDistanceToPolylineMeters(poi.coordinates, routePolyline);
+      if (!Number.isFinite(dist) || dist > ROUTE_BUFFER_METERS) continue;
+      const offset = metersAlongRoute(poi.coordinates, routePolyline);
+      withRouteMeta.push({ ...poi, distanceMeters: dist, routeOffsetMeters: offset });
+    }
+    withRouteMeta.sort(
+      (a, b) => (a.routeOffsetMeters ?? Number.POSITIVE_INFINITY) - (b.routeOffsetMeters ?? Number.POSITIVE_INFINITY)
+    );
+    const filtered = filterAttractionsNoise(withRouteMeta, categories);
+    this.routeCache.set(routeKey, { signature: routeKey, data: filtered, savedAt: Date.now() });
+    return filtered;
+  }
+
+  async retrieveDetails(mapboxId: string, sessionToken: string): Promise<POIDetail> {
+    const token = env.mapboxPublicToken;
+    if (!token) return {};
+    const params = new URLSearchParams({ access_token: token, session_token: sessionToken, language: "en" });
+    const res = await fetch(`${MAPBOX_SEARCH_BASE}/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`);
+    if (!res.ok) throw new Error(`Mapbox retrieve failed (${res.status})`);
+    const payload = await res.json().catch(() => ({ features: [] }));
+    const feature = Array.isArray(payload?.features) ? payload.features[0] : null;
+    const properties = asRecord(asRecord(feature).properties);
+    const hoursRaw = properties.opening_hours;
+    const hoursRec = asRecord(hoursRaw);
+    const hours = Array.isArray(hoursRec.weekday_text) ? (hoursRec.weekday_text as string[]) : [];
+    return {
+      phone: typeof properties.tel === "string" ? properties.tel : undefined,
+      website: typeof properties.website === "string" ? properties.website : undefined,
+      hours,
+    };
+  }
+}
+
+export const poiSearchRepository = new POISearchRepository();

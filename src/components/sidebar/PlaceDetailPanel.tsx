@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { POI, useTripStore } from "@/stores/tripStore";
 import { useMapStore } from "@/stores/mapStore";
@@ -144,10 +145,13 @@ export function PlaceDetailPanel({ poi, onClose }: PlaceDetailPanelProps) {
           <Skeleton className="w-full h-48" />
         ) : detail?.image ? (
           <div className="relative w-full h-48 bg-gray-100">
-            <img
+            <Image
               src={detail.image}
               alt={detail.name}
-              className="w-full h-full object-cover"
+              fill
+              className="object-cover"
+              sizes="100vw"
+              unoptimized
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = "none";
                 (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden");

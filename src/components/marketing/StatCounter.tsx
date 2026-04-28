@@ -31,7 +31,9 @@ export function StatCounter({
   const started = useRef(false);
 
   useEffect(() => {
-    if (reduceMotion) setRevealed(true);
+    if (reduceMotion) {
+      queueMicrotask(() => setRevealed(true));
+    }
   }, [reduceMotion]);
 
   useEffect(() => {
@@ -39,7 +41,10 @@ export function StatCounter({
     started.current = true;
 
     if (reduceMotion) {
-      setDisplay(end);
+      queueMicrotask(() => {
+        setDisplay(end);
+        setRevealed(true);
+      });
       return;
     }
 

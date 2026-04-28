@@ -62,7 +62,7 @@ export async function POST(
   const raw = await req.json().catch(() => null);
   const body =
     typeof raw?.body === "string" ? raw.body.trim().slice(0, MAX_BODY_LEN) : "";
-  let imageUrl =
+  const imageUrl =
     typeof raw?.imageUrl === "string" ? raw.imageUrl.trim() : "";
 
   if (imageUrl.length > MAX_IMAGE_URL_LEN) {

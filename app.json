@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "d928988c-fb39-4328-a9dc-ab099ce5ecf4"
+      }
+    },
+    "android": {
+      "package": "com.pencillabs.viazo"
+    }
+  }
+}

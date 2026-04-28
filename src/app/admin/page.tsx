@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -99,7 +99,7 @@ export default function AdminPage() {
     if (status === "unauthenticated") router.replace("/auth/login");
   }, [status, router]);
 
-  const loadAdminData = async (days: 7 | 30 | 90) => {
+  const loadAdminData = useCallback(async (days: 7 | 30 | 90) => {
     const [usersRes, statsRes] = await Promise.all([
       fetch("/api/admin/users").then(async (res) => {
         if (!res.ok) throw new Error("forbidden");
@@ -112,7 +112,7 @@ export default function AdminPage() {
     ]);
     setUsers(Array.isArray(usersRes) ? usersRes : []);
     setStatsData(statsRes as AdminStats);
-  };
+  }, []);
 
   useEffect(() => {
     if (!adminReady || status !== "authenticated") return;
@@ -120,13 +120,22 @@ export default function AdminPage() {
       router.replace("/dashboard");
       return;
     }
-    loadAdminData(rangeDays)
-      .catch(() => {
-        setUsers([]);
-        setStatsData(null);
-      })
-      .finally(() => setLoading(false));
-  }, [adminReady, isAdmin, status, router, rangeDays]);
+    let cancelled = false;
+    queueMicrotask(() => {
+      void loadAdminData(rangeDays)
+        .catch(() => {
+          if (cancelled) return;
+          setUsers([]);
+          setStatsData(null);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [adminReady, isAdmin, status, router, rangeDays, loadAdminData]);
 
   const stats = useMemo(() => {
     return users.reduce(

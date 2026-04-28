@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Viazo",
+    "slug": "plan-your-trip-mobile",
+    "newArchEnabled": true,
+    "scheme": "planyourtrip",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.viazo.mobile"
+    },
+    "android": {
+      "package": "com.viazo.mobile"
+    },
+    "plugins": ["expo-router", "@rnmapbox/maps"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

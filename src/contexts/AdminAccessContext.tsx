@@ -41,13 +41,17 @@ export function AdminAccessProvider({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (status === "unauthenticated") {
-      setIsAdmin(false);
-      setAccount(null);
-      setReady(true);
+      queueMicrotask(() => {
+        setIsAdmin(false);
+        setAccount(null);
+        setReady(true);
+      });
       return;
     }
     if (status === "loading") {
-      setReady(false);
+      queueMicrotask(() => {
+        setReady(false);
+      });
       return;
     }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useCallback, useEffect } from "react";
 import { useMapStore } from "@/stores/mapStore";
 import { useTripStore, POI } from "@/stores/tripStore";
@@ -447,10 +448,13 @@ export function WaypointExplorePanel() {
             <Skeleton className="w-full h-44" />
           ) : detail?.image ? (
             <div className="relative w-full h-44 bg-gray-100">
-              <img
+              <Image
                 src={detail.image}
                 alt={detail.name}
-                className="w-full h-full object-cover"
+                fill
+                className="object-cover"
+                sizes="(max-width: 1024px) 100vw, 360px"
+                unoptimized
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = "none";
                 }}

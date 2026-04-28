@@ -2,6 +2,11 @@
 
 # dependencies
 /node_modules
+**/node_modules/
+**/android/build/
+**/android/**/build/
+**/android/**/intermediates/
+**/*.so
 /.pnp
 .pnp.*
 .yarn/*

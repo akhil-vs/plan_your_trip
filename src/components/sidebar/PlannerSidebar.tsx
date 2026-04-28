@@ -557,7 +557,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     return `${(meters / 1000).toFixed(1)} km`;
   };
 
-  const estimateLegMinutesForDay = (a: WaypointData, b: WaypointData) => {
+  const estimateLegMinutesForDay = useCallback((a: WaypointData, b: WaypointData) => {
     const toRad = (value: number) => (value * Math.PI) / 180;
     const earthRadiusKm = 6371;
     const dLat = toRad(b.lat - a.lat);
@@ -572,9 +572,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     const distanceKm = 2 * earthRadiusKm * Math.asin(Math.sqrt(h));
     const speedKmPerHour = 60; // Keep manual recalc aligned with default driving mode
     return Math.max(1, Math.round((distanceKm / speedKmPerHour) * 60));
-  };
+  }, []);
 
-  const estimateLegMetersForDay = (a: WaypointData, b: WaypointData) => {
+  const estimateLegMetersForDay = useCallback((a: WaypointData, b: WaypointData) => {
     const toRad = (value: number) => (value * Math.PI) / 180;
     const earthRadiusKm = 6371;
     const dLat = toRad(b.lat - a.lat);
@@ -588,44 +588,44 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
     const distanceKm = 2 * earthRadiusKm * Math.asin(Math.sqrt(h));
     return Math.round(distanceKm * 1000);
-  };
+  }, []);
 
-  const recalculateDayPlanTravel = (
-    plans: DayPlan[],
-    allWaypoints: WaypointData[]
-  ): DayPlan[] => {
-    const waypointById = new Map(allWaypoints.map((wp) => [wp.id, wp]));
-    let previousDayLastWaypointId: string | null = null;
+  const recalculateDayPlanTravel = useCallback(
+    (plans: DayPlan[], allWaypoints: WaypointData[]): DayPlan[] => {
+      const waypointById = new Map(allWaypoints.map((wp) => [wp.id, wp]));
+      let previousDayLastWaypointId: string | null = null;
 
-    return plans.map((plan) => {
-      let estimatedTravelMinutes = 0;
-      let estimatedTravelMeters = 0;
+      return plans.map((plan) => {
+        let estimatedTravelMinutes = 0;
+        let estimatedTravelMeters = 0;
 
-      // Carry-over leg: previous day's endpoint -> current day's first stop.
-      if (previousDayLastWaypointId && plan.waypointIds.length > 0) {
-        const previousDayLast = waypointById.get(previousDayLastWaypointId);
-        const currentDayFirst = waypointById.get(plan.waypointIds[0]);
-        if (previousDayLast && currentDayFirst) {
-          estimatedTravelMinutes += estimateLegMinutesForDay(previousDayLast, currentDayFirst);
-          estimatedTravelMeters += estimateLegMetersForDay(previousDayLast, currentDayFirst);
+        // Carry-over leg: previous day's endpoint -> current day's first stop.
+        if (previousDayLastWaypointId && plan.waypointIds.length > 0) {
+          const previousDayLast = waypointById.get(previousDayLastWaypointId);
+          const currentDayFirst = waypointById.get(plan.waypointIds[0]);
+          if (previousDayLast && currentDayFirst) {
+            estimatedTravelMinutes += estimateLegMinutesForDay(previousDayLast, currentDayFirst);
+            estimatedTravelMeters += estimateLegMetersForDay(previousDayLast, currentDayFirst);
+          }
         }
-      }
 
-      for (let i = 0; i < plan.waypointIds.length - 1; i += 1) {
-        const from = waypointById.get(plan.waypointIds[i]);
-        const to = waypointById.get(plan.waypointIds[i + 1]);
-        if (!from || !to) continue;
-        estimatedTravelMinutes += estimateLegMinutesForDay(from, to);
-        estimatedTravelMeters += estimateLegMetersForDay(from, to);
-      }
+        for (let i = 0; i < plan.waypointIds.length - 1; i += 1) {
+          const from = waypointById.get(plan.waypointIds[i]);
+          const to = waypointById.get(plan.waypointIds[i + 1]);
+          if (!from || !to) continue;
+          estimatedTravelMinutes += estimateLegMinutesForDay(from, to);
+          estimatedTravelMeters += estimateLegMetersForDay(from, to);
+        }
 
-      if (plan.waypointIds.length > 0) {
-        previousDayLastWaypointId = plan.waypointIds[plan.waypointIds.length - 1];
-      }
+        if (plan.waypointIds.length > 0) {
+          previousDayLastWaypointId = plan.waypointIds[plan.waypointIds.length - 1];
+        }
 
-      return { ...plan, estimatedTravelMinutes, estimatedTravelMeters };
-    });
-  };
+        return { ...plan, estimatedTravelMinutes, estimatedTravelMeters };
+      });
+    },
+    [estimateLegMinutesForDay, estimateLegMetersForDay]
+  );
 
   const getDayVisitMinutes = (dayPlan: DayPlan) =>
     dayPlan.waypointIds.reduce((total, id) => {
@@ -697,7 +697,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setOptimizeDays((prev) =>
       recalculateDayPlanTravel(normalizeDayPlans(waypoints, prev), waypoints)
     );
-  }, [waypoints, normalizeDayPlans]);
+  }, [waypoints, normalizeDayPlans, recalculateDayPlanTravel]);
 
   useEffect(() => {
     setVisitMinutesByWaypointId((prev) => {
@@ -1013,6 +1013,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setDayEndMinutes,
     setDefaultVisitMinutes,
     resetNewTripPlanner,
+    recalculateDayPlanTravel,
   ]);
 
   const performSave = async (resolvedName: string) => {
