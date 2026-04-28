@@ -20,9 +20,11 @@ function originFromEnv(s) {
   return stripQuotedEnv(s).replace(/\/$/, "");
 }
 
-const explicit = originFromEnv(process.env.EXPO_PUBLIC_API_BASE_URL);
 const nextAuth = originFromEnv(process.env.NEXTAUTH_URL);
-const apiBaseUrl = explicit || nextAuth || "";
+const explicit = originFromEnv(process.env.EXPO_PUBLIC_API_BASE_URL);
+// Keep mobile API URL aligned with Next.js network URL.
+// NEXTAUTH_URL should be the single source of truth for local/LAN dev.
+const apiBaseUrl = nextAuth || explicit || "";
 
 // Keep process.env in sync for tools that read it; the app prefers `expo.extra` (runtime)
 // because `process.env.EXPO_PUBLIC_*` is often inlined at bundle time before this runs.

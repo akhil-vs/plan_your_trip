@@ -21,10 +21,22 @@ type SearchOptions = {
 
 const MAPBOX_SEARCH_BASE = "https://api.mapbox.com/search/searchbox/v1";
 const ROUTE_BUFFER_METERS = 500;
+const NATIVE_ROUTE_BUFFER_METERS = 1000;
 const NEARBY_CACHE_DISTANCE_METERS = 500;
 const CACHE_TTL_MS = 90_000;
+const SEARCH_IN_AREA_MAX_DISTANCE_METERS = 3000;
+const SEARCH_NEARBY_MAX_DISTANCE_METERS = 20_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const preferredLanguage = () => {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale || "en";
+    const primary = locale.split("-")[0]?.trim();
+    return primary || "en";
+  } catch {
+    return "en";
+  }
+};
 
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
 
@@ -121,8 +133,24 @@ const localBoundingBox = (location: LngLat, radiusKm = 6): [number, number, numb
   return [lng - lngDelta, lat - latDelta, lng + lngDelta, lat + latDelta];
 };
 
+const normalizeCategoryId = (categoryId: string): string => {
+  const key = categoryId.trim().toLowerCase();
+  switch (key) {
+    case "restaurants":
+      return "restaurant";
+    case "bars":
+      return "bar";
+    case "parking_lot":
+      return "parking";
+    case "hotels":
+      return "hotel";
+    default:
+      return key;
+  }
+};
+
 const toSearchboxCategorySlug = (categoryId: string): string | null => {
-  switch (categoryId) {
+  switch (normalizeCategoryId(categoryId)) {
     case "restaurant":
       return "restaurant";
     case "coffee_shop_cafe":
@@ -185,7 +213,7 @@ async function fetchCategorySearchbox(
     access_token: token,
     proximity: `${proximity[0]},${proximity[1]}`,
     limit: String(limit),
-    language: "en",
+    language: preferredLanguage(),
     session_token: sessionToken,
   });
   if (options?.boundingBox) {
@@ -198,7 +226,7 @@ async function fetchCategorySearchbox(
     console.warn(`[POI] category failed for "${slug}" (${response.status})`);
     // Some tokens/regions reject category path lookups for otherwise valid slugs.
     // Fallback to suggest+retrieve for the category query so chips still show data.
-    return fetchSuggestRetrieveBroad(category.id.replace(/_/g, " "), proximity, sessionToken, limit);
+    return fetchSuggestRetrieveBroad(normalizeCategoryId(category.id).replace(/_/g, " "), proximity, sessionToken, limit);
   }
   const payload = await response.json().catch(() => ({ features: [] }));
   const features = Array.isArray(payload?.features) ? payload.features : [];
@@ -221,7 +249,7 @@ async function fetchSuggestRetrieveBroad(
     q: query,
     proximity: `${proximity[0]},${proximity[1]}`,
     limit: String(limit),
-    language: "en",
+    language: preferredLanguage(),
     session_token: sessionToken,
     types: "poi",
   });
@@ -242,7 +270,7 @@ async function fetchSuggestRetrieveBroad(
     const retrieveParams = new URLSearchParams({
       access_token: token,
       session_token: sessionToken,
-      language: "en",
+      language: preferredLanguage(),
     });
     const retrieveResponse = await fetchWithRetry(
       `${MAPBOX_SEARCH_BASE}/retrieve/${encodeURIComponent(id)}?${retrieveParams.toString()}`
@@ -288,34 +316,49 @@ export class POISearchRepository {
       return cached.data;
     }
 
-    if (nativePoiDiscover.isAvailable()) {
+    const nearbyBbox = localBoundingBox(location, 12);
+    if (nativePoiDiscover.isAvailable(env.mapboxPublicToken)) {
       const data = dedupeByMapboxId(
         await nativePoiDiscover.searchNearby(
           env.mapboxPublicToken,
-          categories.map((c) => c.id),
+          categories.map((c) => normalizeCategoryId(c.id)),
           location
         )
       );
-      this.nearbyCache.set(key, { center: location, data, savedAt: Date.now() });
-      return data;
+      const localized = data
+        .map((poi) => ({ ...poi, distanceMeters: haversineMeters(location, poi.coordinates) }))
+        .filter((poi) => Number.isFinite(poi.distanceMeters) && poi.distanceMeters <= SEARCH_NEARBY_MAX_DISTANCE_METERS)
+        .sort((a, b) => a.distanceMeters - b.distanceMeters)
+        .slice(0, 30);
+      this.nearbyCache.set(key, { center: location, data: localized, savedAt: Date.now() });
+      return localized;
     }
 
     const selected = categories.length <= 4 ? categories : categories.slice(0, 3);
     const results: POIFeature[] = [];
     if (shouldUseBroadQuery(selected)) {
-      const primary = await fetchSuggestRetrieveBroad(normalizeQuery(selected), location, sessionToken, 10);
+      const primary = await fetchSuggestRetrieveBroad(normalizeQuery(selected), location, sessionToken, 10, {
+        boundingBox: nearbyBbox,
+      });
       results.push(...primary);
     }
     if (results.length < 10) {
       for (const category of selected) {
-        const batch = await fetchCategorySearchbox(category, location, sessionToken, 10);
+        const batch = await fetchCategorySearchbox(category, location, sessionToken, 10, {
+          boundingBox: nearbyBbox,
+        });
         results.push(...batch);
         await sleep(300);
       }
     }
     const deduped = filterAttractionsNoise(dedupeByMapboxId(results), categories);
-    this.nearbyCache.set(key, { center: location, data: deduped, savedAt: Date.now() });
-    return deduped;
+    const localized = deduped
+      .map((poi) => ({ ...poi, distanceMeters: haversineMeters(location, poi.coordinates) }))
+      .filter((poi) => Number.isFinite(poi.distanceMeters) && poi.distanceMeters <= SEARCH_NEARBY_MAX_DISTANCE_METERS)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
+      .slice(0, 30);
+    this.nearbyCache.set(key, { center: location, data: localized, savedAt: Date.now() });
+    return localized;
   }
 
   async searchInArea(
@@ -348,8 +391,13 @@ export class POISearchRepository {
       await sleep(300);
     }
     const deduped = filterAttractionsNoise(dedupeByMapboxId(results), categories);
-    this.nearbyCache.set(key, { center: location, data: deduped, savedAt: Date.now() });
-    return deduped;
+    const closeBy = deduped
+      .map((poi) => ({ ...poi, distanceMeters: haversineMeters(location, poi.coordinates) }))
+      .filter((poi) => poi.distanceMeters <= SEARCH_IN_AREA_MAX_DISTANCE_METERS)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
+      .slice(0, 30);
+    this.nearbyCache.set(key, { center: location, data: closeBy, savedAt: Date.now() });
+    return closeBy;
   }
 
   async searchAlongRoute(
@@ -363,18 +411,18 @@ export class POISearchRepository {
       return cachedRoute.data;
     }
 
-    if (nativePoiDiscover.isAvailable()) {
+    if (nativePoiDiscover.isAvailable(env.mapboxPublicToken)) {
       const nativeResults = dedupeByMapboxId(
         await nativePoiDiscover.searchAlongRoute(
           env.mapboxPublicToken,
-          categories.map((c) => c.id),
+          categories.map((c) => normalizeCategoryId(c.id)),
           routePolyline
         )
       );
       const withRouteMeta: POIFeature[] = [];
       for (const poi of nativeResults) {
         const dist = minDistanceToPolylineMeters(poi.coordinates, routePolyline);
-        if (!Number.isFinite(dist) || dist > ROUTE_BUFFER_METERS) continue;
+        if (!Number.isFinite(dist) || dist > NATIVE_ROUTE_BUFFER_METERS) continue;
         const offset = metersAlongRoute(poi.coordinates, routePolyline);
         withRouteMeta.push({ ...poi, distanceMeters: dist, routeOffsetMeters: offset });
       }
@@ -419,7 +467,11 @@ export class POISearchRepository {
   async retrieveDetails(mapboxId: string, sessionToken: string): Promise<POIDetail> {
     const token = env.mapboxPublicToken;
     if (!token) return {};
-    const params = new URLSearchParams({ access_token: token, session_token: sessionToken, language: "en" });
+    const params = new URLSearchParams({
+      access_token: token,
+      session_token: sessionToken,
+      language: preferredLanguage(),
+    });
     const res = await fetch(`${MAPBOX_SEARCH_BASE}/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`);
     if (!res.ok) throw new Error(`Mapbox retrieve failed (${res.status})`);
     const payload = await res.json().catch(() => ({ features: [] }));

@@ -20,6 +20,24 @@ const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 
 type RequestOptions = RequestInit & { auth?: boolean };
+type SearchLocationOptions = {
+  bbox?: [number, number, number, number];
+  limit?: number;
+  types?: string;
+  signal?: AbortSignal;
+  sessionToken?: string;
+};
+
+type SearchCacheEntry = {
+  savedAt: number;
+  data: LocationSearchResult[];
+};
+
+const SEARCH_CACHE_TTL_MS = 30_000;
+const searchLocationsCache = new Map<string, SearchCacheEntry>();
+const searchPoisCache = new Map<string, SearchCacheEntry>();
+const inflightSearchLocations = new Map<string, Promise<LocationSearchResult[]>>();
+const inflightSearchPois = new Map<string, Promise<LocationSearchResult[]>>();
 
 function isLikelyUnreachableHost(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -74,15 +92,25 @@ export const api = {
   searchPois: async (
     query: string,
     proximity?: { lat: number; lng: number },
-    options?: { limit?: number }
+    options?: { limit?: number; sessionToken?: string }
   ): Promise<LocationSearchResult[]> => {
     const token = env.mapboxPublicToken;
     if (!token || !query.trim()) return [];
     const limit = Number.isFinite(options?.limit) ? Math.max(1, Math.min(15, options?.limit ?? 10)) : 10;
     const sessionToken =
-      typeof globalThis.crypto?.randomUUID === "function"
+      options?.sessionToken ||
+      (typeof globalThis.crypto?.randomUUID === "function"
         ? globalThis.crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const proximityKey = proximity ? `${proximity.lat.toFixed(4)},${proximity.lng.toFixed(4)}` : "none";
+    const cacheKey = `${query.trim().toLowerCase()}|${proximityKey}|${limit}`;
+    const cached = searchPoisCache.get(cacheKey);
+    if (cached && Date.now() - cached.savedAt <= SEARCH_CACHE_TTL_MS) {
+      return cached.data;
+    }
+    const inflight = inflightSearchPois.get(cacheKey);
+    if (inflight) return inflight;
+    const requestPromise = (async () => {
     const params = new URLSearchParams({
       access_token: token,
       q: query.trim(),
@@ -143,36 +171,64 @@ export const api = {
         } as LocationSearchResult;
       })
     );
-    return features.filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
+      const rows = features.filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
+      searchPoisCache.set(cacheKey, { savedAt: Date.now(), data: rows });
+      return rows;
+    })();
+    inflightSearchPois.set(cacheKey, requestPromise);
+    try {
+      return await requestPromise;
+    } finally {
+      inflightSearchPois.delete(cacheKey);
+    }
   },
 
   searchLocations: async (
     query: string,
     proximity?: { lat: number; lng: number },
-    options?: { bbox?: [number, number, number, number]; limit?: number; types?: string }
+    options?: SearchLocationOptions
   ): Promise<LocationSearchResult[]> => {
     const token = env.mapboxPublicToken;
     if (!token || !query.trim()) return [];
+    const normalizedQuery = query.trim().toLowerCase();
     const encoded = encodeURIComponent(query.trim());
     const limit = Number.isFinite(options?.limit) ? String(Math.max(1, Math.min(30, options?.limit ?? 10))) : "10";
+    const proximityKey = proximity ? `${proximity.lat.toFixed(4)},${proximity.lng.toFixed(4)}` : "none";
+    const bboxKey =
+      options?.bbox && options.bbox.length === 4
+        ? options.bbox.map((v) => Number(v).toFixed(4)).join(",")
+        : "none";
+    const typesKey = options?.types?.trim() || "poi,address,place,locality,neighborhood,district,region,country";
+    const cacheKey = `${normalizedQuery}|${proximityKey}|${bboxKey}|${limit}|${typesKey}`;
+    const canUseCache = !options?.signal;
+    if (canUseCache) {
+      const cached = searchLocationsCache.get(cacheKey);
+      if (cached && Date.now() - cached.savedAt <= SEARCH_CACHE_TTL_MS) {
+        return cached.data;
+      }
+      const inflight = inflightSearchLocations.get(cacheKey);
+      if (inflight) return inflight;
+    }
+    const requestPromise = (async () => {
     const params = new URLSearchParams({
       access_token: token,
       autocomplete: "true",
       limit,
       language: "en",
-      types: options?.types?.trim() || "poi,address,place,locality,neighborhood,district,region,country",
+      types: typesKey,
     });
     if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
     if (options?.bbox && options.bbox.length === 4) {
       params.set("bbox", options.bbox.map((v) => String(v)).join(","));
     }
     const res = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?${params.toString()}`
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?${params.toString()}`,
+      { signal: options?.signal }
     );
     if (!res.ok) return [];
     const payload = await res.json().catch(() => ({ features: [] }));
     const features = Array.isArray(payload?.features) ? payload.features : [];
-    return features
+      const rows = features
       .map((featureUnknown: unknown) => {
         const f = asRecord(featureUnknown);
         const geometry = asRecord(f.geometry);
@@ -193,6 +249,18 @@ export const api = {
         } as LocationSearchResult;
       })
       .filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
+      if (canUseCache) {
+        searchLocationsCache.set(cacheKey, { savedAt: Date.now(), data: rows });
+      }
+      return rows;
+    })();
+    if (!canUseCache) return requestPromise;
+    inflightSearchLocations.set(cacheKey, requestPromise);
+    try {
+      return await requestPromise;
+    } finally {
+      inflightSearchLocations.delete(cacheKey);
+    }
   },
 
   login: (email: string, password: string) =>
@@ -303,6 +371,16 @@ export const api = {
     request<{ shareUrl: string; shareId: string; isPublic: boolean }>(
       `/api/trips/${tripId}/share`,
       { method: "POST" }
+    ),
+  finalizeTrip: (tripId: string) =>
+    request<{ id: string; status: "DRAFT" | "FINALIZED"; isPublic: boolean }>(
+      `/api/trips/${tripId}/finalize`,
+      { method: "POST" }
+    ),
+  unfinalizeTrip: (tripId: string) =>
+    request<{ id: string; status: "DRAFT" | "FINALIZED"; isPublic: boolean }>(
+      `/api/trips/${tripId}/finalize`,
+      { method: "DELETE" }
     ),
   unpublishTrip: (tripId: string) =>
     request<{ shareId: string; isPublic: boolean }>(`/api/trips/${tripId}/share`, {

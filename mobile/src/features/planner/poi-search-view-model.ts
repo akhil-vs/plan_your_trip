@@ -25,6 +25,7 @@ export function usePOISearchViewModel() {
   const [lastNearbySearchOrigin, setLastNearbySearchOrigin] = useState<LngLat | null>(null);
   const inFlightRequest = useRef(0);
   const mapCenterRef = useRef<LngLat | null>(null);
+  const lastRequestKeyRef = useRef<string | null>(null);
 
   const effectiveNearbyAnchor = useCallback((): LngLat | null => {
     const anchor = currentLocation ?? mapCenterRef.current;
@@ -41,6 +42,15 @@ export function usePOISearchViewModel() {
       if (!chip) return;
       const mode = overrideMode ?? searchMode;
       const categories = CHIP_DEFINITIONS[chip].categories;
+      const nearbyAnchorForKey = effectiveNearbyAnchor();
+      const requestKey =
+        mode === "ALONG_ROUTE"
+          ? `ALONG_ROUTE:${chip}:${routePolyline.length}`
+          : `NEARBY:${chip}:${nearbyAnchorForKey?.[0]?.toFixed(4) ?? "none"}:${nearbyAnchorForKey?.[1]?.toFixed(4) ?? "none"}:${hasStops}`;
+      if (lastRequestKeyRef.current === requestKey && !overrideMode && !overrideChip) {
+        return;
+      }
+      lastRequestKeyRef.current = requestKey;
       const requestId = ++inFlightRequest.current;
       setError(null);
       setIsLoading(true);
@@ -93,6 +103,7 @@ export function usePOISearchViewModel() {
         setPoiResults([]);
         setSelectedPoiId(null);
         setError(null);
+        lastRequestKeyRef.current = null;
         return;
       }
       const nextMode: SearchMode = isAlongRouteEnabled ? searchMode : "NEARBY";
@@ -101,6 +112,7 @@ export function usePOISearchViewModel() {
       setPoiResults([]);
       setSearchMode(nextMode);
       setSelectedPoiId(null);
+      lastRequestKeyRef.current = null;
       void runSearch(nextMode, chip);
     },
     [activeChip, isAlongRouteEnabled, runSearch, searchMode]
@@ -113,6 +125,7 @@ export function usePOISearchViewModel() {
       setSessionToken(newSessionToken());
       setSelectedPoiId(null);
       setPoiResults([]);
+      lastRequestKeyRef.current = null;
       void runSearch(mode);
     },
     [isAlongRouteEnabled, runSearch]
@@ -128,9 +141,11 @@ export function usePOISearchViewModel() {
       if (!enabled && searchMode === "ALONG_ROUTE") {
         setSearchMode("NEARBY");
         setSessionToken(newSessionToken());
+        lastRequestKeyRef.current = null;
         if (activeChip) void runSearch("NEARBY");
       } else if (enabled && searchMode === "ALONG_ROUTE" && activeChip) {
         setSessionToken(newSessionToken());
+        lastRequestKeyRef.current = null;
         void runSearch("ALONG_ROUTE");
       }
     },
@@ -147,6 +162,7 @@ export function usePOISearchViewModel() {
         haversineMeters(lastNearbySearchOrigin, location) > 500
       ) {
         setSessionToken(newSessionToken());
+        lastRequestKeyRef.current = null;
         void runSearch("NEARBY");
       }
     },
@@ -175,8 +191,19 @@ export function usePOISearchViewModel() {
 
   const refresh = useCallback(() => {
     setSessionToken(newSessionToken());
+    lastRequestKeyRef.current = null;
     void runSearch();
   }, [runSearch]);
+
+  const clear = useCallback(() => {
+    inFlightRequest.current += 1;
+    setActiveChip(null);
+    setPoiResults([]);
+    setSelectedPoiId(null);
+    setError(null);
+    setIsLoading(false);
+    lastRequestKeyRef.current = null;
+  }, []);
 
   return useMemo(
     () => ({
@@ -198,6 +225,7 @@ export function usePOISearchViewModel() {
         onMapCenterUpdated,
         onPOISelected,
         refresh,
+        clear,
       },
     }),
     [
@@ -216,6 +244,7 @@ export function usePOISearchViewModel() {
       onMapCenterUpdated,
       onPOISelected,
       refresh,
+      clear,
     ]
   );
 }

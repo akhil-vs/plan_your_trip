@@ -2,12 +2,29 @@ import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
+import {
+  Alert,
+  AppState,
+  Keyboard,
+  LayoutAnimation,
+  Linking,
+  Platform,
+  Pressable,
+  Share,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import Mapbox from "@rnmapbox/maps";
 import DraggableFlatList, { type RenderItemParams } from "react-native-draggable-flatlist";
 import { buildTripUpdateBody } from "@/lib/trip-payload";
 import { api } from "@/services/api";
+import { getAccessToken } from "@/services/session";
 import type { LocationSearchResult, Trip, Waypoint } from "@/types/domain";
+import { env } from "@/config/env";
 import { lngLatBoundsFromCoordinates } from "@/utils/map-bounds";
 import { mapStyles, mapUiTokens, type MapStyleId } from "./map-tokens";
 import { CHIP_DEFINITIONS, type ChipType } from "./poi-search-model";
@@ -101,6 +118,15 @@ export function TripPlannerScreen({ tripId }: Props) {
   const [poiSearchText, setPoiSearchText] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [searchSuggestions, setSearchSuggestions] = useState<LocationSearchResult[]>([]);
+  const [recentSearches, setRecentSearches] = useState<LocationSearchResult[]>([]);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchIntent, setSearchIntent] = useState<"DESTINATION" | "ADD_STOP">("DESTINATION");
+  const [selectedSearchLocation, setSelectedSearchLocation] = useState<LocationSearchResult | null>(null);
+  const [selectedWaypointKey, setSelectedWaypointKey] = useState<string | null>(null);
+  const [publishToggleLoading, setPublishToggleLoading] = useState(false);
+  const [finalizeLoading, setFinalizeLoading] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [bannerListMode, setBannerListMode] = useState<"SUGGESTIONS" | "POIS">("POIS");
   const [notice, setNotice] = useState<{ type: "success" | "info" | "error"; text: string } | null>(
     null
@@ -112,6 +138,14 @@ export function TripPlannerScreen({ tripId }: Props) {
   const suppressCameraEventsUntilRef = useRef(0);
   const lastCameraTriggeredRefreshAtRef = useRef(0);
   const suggestionRequestIdRef = useRef(0);
+  const suggestionAnchorRef = useRef<{ lng: number; lat: number } | null>(null);
+  const suggestionAbortControllerRef = useRef<AbortController | null>(null);
+  const suggestionSessionTokenRef = useRef(
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  const searchInputRef = useRef<TextInput>(null);
 
   const runProgrammaticCameraMove = (fn: () => void, suppressMs = 1200) => {
     suppressCameraEventsUntilRef.current = Date.now() + suppressMs;
@@ -202,49 +236,34 @@ export function TripPlannerScreen({ tripId }: Props) {
   const clearSuggestionState = () => {
     setPoiDetailExpanded(false);
   };
+  const resetSearchUi = () => {
+    suggestionRequestIdRef.current += 1;
+    suggestionAbortControllerRef.current?.abort();
+    suggestionAbortControllerRef.current = null;
+    setPoiSearchText("");
+    setSearchSuggestions([]);
+    setSuggesting(false);
+    setBannerListMode("POIS");
+    suggestionSessionTokenRef.current =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    Keyboard.dismiss();
+  };
 
   const normalizeUniqueWaypoints = (items: Waypoint[]) => {
-    const normalized: Waypoint[] = [];
-    const DUPLICATE_METERS = 35; // collapse points that are effectively the same place
-    const toRad = (v: number) => (v * Math.PI) / 180;
-    const distanceMeters = (a: Waypoint, b: Waypoint) => {
-      const R = 6371000;
-      const dLat = toRad(b.lat - a.lat);
-      const dLng = toRad(b.lng - a.lng);
-      const lat1 = toRad(a.lat);
-      const lat2 = toRad(b.lat);
-      const h =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-      return 2 * R * Math.asin(Math.sqrt(h));
-    };
-
-    for (const wp of items) {
-      const cleanName = wp.name.trim() || `Stop ${normalized.length + 1}`;
-      const duplicateById =
-        wp.id && normalized.some((existing) => typeof existing.id === "string" && existing.id === wp.id);
-      const duplicateByLocation = normalized.some((existing) => distanceMeters(existing, wp) <= DUPLICATE_METERS);
-      if (duplicateById || duplicateByLocation) continue;
-      normalized.push({
-        ...wp,
-        name: cleanName,
-        order: normalized.length,
-      });
-    }
-    return normalized;
+    return items.map((wp, index) => ({
+      ...wp,
+      name: wp.name.trim() || `Stop ${index + 1}`,
+      order: index,
+    }));
   };
 
   const addQueuedStops = async () => {
     if (!trip || queued.length === 0) return;
-    const existing = waypoints.map((w) => w.name.toLowerCase().trim());
-    const uniqueQueued = queued.filter((q) => !existing.includes(q.name.toLowerCase().trim()));
-    if (uniqueQueued.length === 0) {
-      Alert.alert("Nothing to add", "Selected places already exist in this itinerary.");
-      return;
-    }
     const next: Waypoint[] = [
       ...waypoints,
-      ...uniqueQueued.map((q, idx) => ({
+      ...queued.map((q, idx) => ({
         name: q.name,
         lat: q.lat,
         lng: q.lng,
@@ -252,12 +271,9 @@ export function TripPlannerScreen({ tripId }: Props) {
       })),
     ];
     const deduped = normalizeUniqueWaypoints(next);
-    if (deduped.length === waypoints.length) {
-      notify("info", "No new unique stops were added.");
-      return;
-    }
     await api.updateTrip(tripId, buildTripUpdateBody(trip, { waypoints: deduped }));
     setQueued([]);
+    poiVM.actions.clear();
     void refetch();
     notify("success", `Added ${deduped.length - waypoints.length} stop${deduped.length - waypoints.length !== 1 ? "s" : ""}.`);
   };
@@ -270,7 +286,79 @@ export function TripPlannerScreen({ tripId }: Props) {
       order: waypoints.length,
     };
     await persistWaypoints([...waypoints, nextWaypoint]);
+    poiVM.actions.clear();
     notify("success", `Added "${poi.name}" to route.`);
+  };
+  const getOrCreateShareUrl = async () => {
+    if (!isTripFinalized) {
+      throw new Error("Finalize itinerary before sharing.");
+    }
+    const result = await api.publishTrip(tripId);
+    await refetch();
+    return result.shareUrl;
+  };
+  const shareOnWhatsApp = async () => {
+    if (!trip) return;
+    try {
+      setShareLoading(true);
+      const shareUrl = await getOrCreateShareUrl();
+      const message = `Check out my trip itinerary: ${shareUrl}`;
+      const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      if (canOpen) {
+        await Linking.openURL(whatsappUrl);
+      } else {
+        await Share.share({ message });
+      }
+    } catch (error) {
+      Alert.alert("Share failed", error instanceof Error ? error.message : String(error));
+    } finally {
+      setShareLoading(false);
+    }
+  };
+  const shareDetailedPdf = async () => {
+    if (!trip) return;
+    if (!isTripFinalized) {
+      Alert.alert("Finalize required", "Finalize this trip before exporting detailed PDF.");
+      return;
+    }
+    try {
+      setPdfLoading(true);
+      const token = await getAccessToken();
+      if (!token) throw new Error("Please sign in again to export PDF.");
+      const fileUri = `${FileSystem.cacheDirectory}trip-${tripId}-detailed.pdf`;
+      await FileSystem.downloadAsync(`${env.apiBaseUrl}/api/trips/${tripId}/export/pdf`, fileUri, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      await Share.share({
+        message: `Detailed itinerary PDF ready: ${fileUri}`,
+      });
+    } catch (error) {
+      Alert.alert("PDF export failed", error instanceof Error ? error.message : String(error));
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+  const selectSearchResult = async (item: LocationSearchResult) => {
+    setRecentSearches((prev) => [item, ...prev.filter((entry) => entry.id !== item.id)].slice(0, 8));
+    setSelectedSearchLocation(item);
+    runProgrammaticCameraMove(() => {
+      cameraRef.current?.setCamera({
+        centerCoordinate: [item.lng, item.lat],
+        zoomLevel: 14,
+        animationDuration: 500,
+        animationMode: "easeTo",
+      });
+    });
+    if (searchIntent === "ADD_STOP") {
+      await addPoiToRoute({ name: item.name, coordinates: [item.lng, item.lat] });
+      setSearchIntent("DESTINATION");
+    }
+    resetSearchUi();
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSearchExpanded(false);
   };
 
   const persistWaypoints = async (nextWaypoints: Waypoint[], nextDayPlans?: Trip["dayPlans"]) => {
@@ -298,6 +386,8 @@ export function TripPlannerScreen({ tripId }: Props) {
     () => waypoints.map((wp, idx) => ({ ...wp, __dragKey: String(wp.id ?? `${wp.name}-${idx}`) })),
     [waypoints]
   );
+  const isTripPublished = Boolean(trip?.isPublic);
+  const isTripFinalized = trip?.status === "FINALIZED";
   const imperialDistance = useMemo(() => usesImperialDistance(), []);
   const readableDuration = useMemo(
     () => formatDurationReadable(routeSummary?.duration ?? 0),
@@ -326,6 +416,29 @@ export function TripPlannerScreen({ tripId }: Props) {
     }),
     [poiVM.state.poiResults]
   );
+  const waypointGeoJson = useMemo(
+    () => ({
+      type: "FeatureCollection" as const,
+      features: waypoints.map((wp, index) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [wp.lng, wp.lat] as [number, number] },
+        properties: {
+          markerId: `${wp.id ?? wp.name}-${index}`,
+          waypointKey: `${wp.id ?? wp.name}-${index}`,
+          waypointName: wp.name,
+          waypointIndex: index,
+          isStart: index === 0,
+        },
+      })),
+    }),
+    [waypoints]
+  );
+  const selectedWaypoint = useMemo(() => {
+    if (!selectedWaypointKey) return null;
+    const index = waypoints.findIndex((wp, idx) => `${wp.id ?? wp.name}-${idx}` === selectedWaypointKey);
+    if (index < 0) return null;
+    return { waypoint: waypoints[index], index };
+  }, [selectedWaypointKey, waypoints]);
   const filteredPoiResults = useMemo(() => {
     const q = poiSearchText.trim().toLowerCase();
     if (!q) return poiVM.state.poiResults;
@@ -346,29 +459,73 @@ export function TripPlannerScreen({ tripId }: Props) {
       return;
     }
     setBannerListMode("SUGGESTIONS");
-    const anchor = currentLocation
-      ? { lng: currentLocation[0], lat: currentLocation[1] }
-      : routeCenterPoint;
+    if (!suggestionAnchorRef.current) {
+      suggestionAnchorRef.current = currentLocation
+        ? { lng: currentLocation[0], lat: currentLocation[1] }
+        : routeCenterPoint;
+    }
+    const anchor = suggestionAnchorRef.current;
     const timer = setTimeout(async () => {
       const requestId = ++suggestionRequestIdRef.current;
       setSuggesting(true);
+      suggestionAbortControllerRef.current?.abort();
+      const abortController = new AbortController();
+      suggestionAbortControllerRef.current = abortController;
       try {
         const results = await api.searchLocations(query, anchor, {
           limit: 8,
           // Include postcode and admin levels so postal code searches resolve properly.
           types: "poi,address,postcode,place,locality,neighborhood,district,region,country",
+          signal: abortController.signal,
+          sessionToken: suggestionSessionTokenRef.current,
         });
         if (requestId !== suggestionRequestIdRef.current) return;
         setSearchSuggestions(results);
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
         // Keep previous suggestions on transient failures to avoid visual flicker.
       } finally {
         if (requestId !== suggestionRequestIdRef.current) return;
         setSuggesting(false);
       }
     }, 350);
+    return () => {
+      clearTimeout(timer);
+      suggestionAbortControllerRef.current?.abort();
+    };
+  }, [poiSearchText]);
+  useEffect(() => {
+    if (poiSearchText.trim().length < 2) {
+      suggestionAnchorRef.current = null;
+    }
+  }, [poiSearchText]);
+  useEffect(() => {
+    if (!searchExpanded) return;
+    const timer = setTimeout(() => searchInputRef.current?.focus(), 60);
     return () => clearTimeout(timer);
-  }, [poiSearchText, currentLocation, routeCenterPoint]);
+  }, [searchExpanded]);
+  useEffect(() => {
+    if (waypoints.length !== 0) return;
+    setSelectedSearchLocation(null);
+    const shouldClearPoiState = Boolean(
+      poiVM.state.activeChip ||
+        poiVM.state.selectedPoiId ||
+        poiVM.state.error ||
+        poiVM.state.isLoading ||
+        poiVM.state.poiResults.length > 0
+    );
+    if (shouldClearPoiState) {
+      poiVM.actions.clear();
+    }
+  }, [
+    waypoints.length,
+    poiVM.state.activeChip,
+    poiVM.state.selectedPoiId,
+    poiVM.state.error,
+    poiVM.state.isLoading,
+    poiVM.state.poiResults.length,
+    poiVM.actions,
+  ]);
   const waitForFreshLocation = () =>
     new Promise<[number, number] | null>((resolve) => {
       let settled = false;
@@ -610,30 +767,67 @@ export function TripPlannerScreen({ tripId }: Props) {
             />
           </Mapbox.ShapeSource>
         ) : null}
-
-        {waypoints.map((wp, index) => (
+        {selectedSearchLocation ? (
           <Mapbox.PointAnnotation
-            key={`${wp.id ?? wp.name}-${index}`}
-            id={`${wp.id ?? wp.name}-${index}`}
-            coordinate={[wp.lng, wp.lat]}
+            id={`selected-search-${selectedSearchLocation.id}`}
+            coordinate={[selectedSearchLocation.lng, selectedSearchLocation.lat]}
           >
-            <View
-              style={[
-                styles.marker,
-                { width: mapUiTokens.markerSize.stop, height: mapUiTokens.markerSize.stop },
-                index === 0 && styles.activeMarker,
-              ]}
-            />
+            <View style={styles.selectedSearchMarker} />
           </Mapbox.PointAnnotation>
-        ))}
+        ) : null}
+
+        {waypoints.length > 0 ? (
+          <Mapbox.ShapeSource
+            id="waypoints-source"
+            shape={waypointGeoJson}
+            onPress={(event) => {
+              const feature = event.features?.[0];
+              const key = String(feature?.properties?.waypointKey ?? "");
+              if (!key) return;
+              setSelectedWaypointKey(key);
+            }}
+          >
+            <Mapbox.CircleLayer
+              id="waypoints-ring-layer"
+              aboveLayerID="routeCore"
+              style={{
+                circleColor: "#ffffff",
+                circleRadius: mapUiTokens.markerSize.stop / 2 + 2,
+              }}
+            />
+            <Mapbox.CircleLayer
+              id="waypoints-core-layer"
+              aboveLayerID="waypoints-ring-layer"
+              style={{
+                circleColor: [
+                  "case",
+                  ["==", ["get", "waypointKey"], selectedWaypointKey ?? ""],
+                  "#111827",
+                  ["==", ["get", "isStart"], true],
+                  mapUiTokens.route.primary,
+                  "#0ea5e9",
+                ],
+                circleRadius: [
+                  "case",
+                  ["==", ["get", "waypointKey"], selectedWaypointKey ?? ""],
+                  mapUiTokens.markerSize.stop / 2 + 1,
+                  mapUiTokens.markerSize.stop / 2 - 1,
+                ],
+              }}
+            />
+          </Mapbox.ShapeSource>
+        ) : null}
       </Mapbox.MapView>
+      {searchExpanded ? <Pressable style={styles.mapDimmer} onPress={() => setSearchExpanded(false)} /> : null}
 
       <View
         style={[
           styles.topSearch,
           {
             maxHeight:
-              sheetIndex === 0
+              searchExpanded
+                ? 520
+                : sheetIndex === 0
                 ? menuOpen
                   ? 480
                   : 430
@@ -665,6 +859,7 @@ export function TripPlannerScreen({ tripId }: Props) {
                   style={[styles.categoryChip, active && styles.categoryChipActive]}
                   onPress={() => {
                     clearSuggestionState();
+                    setSelectedSearchLocation(null);
                     poiVM.actions.onChipSelected(category.key);
                   }}
                 >
@@ -682,14 +877,55 @@ export function TripPlannerScreen({ tripId }: Props) {
             <Text style={styles.menuTriggerText}>⋮</Text>
           </Pressable>
         </View>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search places and POIs"
-          value={poiSearchText}
-          onChangeText={setPoiSearchText}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+        <View style={styles.searchInputRow}>
+          <TextInput
+            ref={searchInputRef}
+            style={[styles.searchInput, { flex: 1 }]}
+            placeholder={searchIntent === "ADD_STOP" ? "Add stop" : "Search destination or POI"}
+            value={poiSearchText}
+            onChangeText={setPoiSearchText}
+            onFocus={() => {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setSearchExpanded(true);
+            }}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {waypoints.length > 0 ? (
+            <Pressable
+              style={[styles.secondaryChipBtn, searchIntent === "ADD_STOP" && styles.secondaryChipBtnActive]}
+              onPress={() => {
+                setSearchIntent((prev) => (prev === "ADD_STOP" ? "DESTINATION" : "ADD_STOP"));
+                setSearchExpanded(true);
+              }}
+            >
+              <Text style={[styles.secondaryChipText, searchIntent === "ADD_STOP" && styles.secondaryChipTextActive]}>
+                Add stop
+              </Text>
+            </Pressable>
+          ) : null}
+          {poiSearchText.trim().length > 0 ? (
+            <Pressable style={styles.clearSearchBtn} onPress={resetSearchUi}>
+              <Text style={styles.clearSearchBtnText}>Clear</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {searchExpanded && recentSearches.length > 0 && poiSearchText.trim().length < 2 ? (
+          <View style={styles.recentSearchesWrap}>
+            <Text style={styles.searchSectionTitle}>Recent</Text>
+            {recentSearches.slice(0, 4).map((item, index) => (
+              <Pressable key={suggestionKey(item, index)} style={styles.recentRow} onPress={() => void selectSearchResult(item)}>
+                <Text style={styles.searchTitle} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.searchSubtitle} numberOfLines={1}>
+                  {item.fullName}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         {(searchSuggestions.length > 0 || poiVM.state.poiResults.length > 0) ? (
           <View style={styles.modeTabs}>
             <Pressable
@@ -720,34 +956,107 @@ export function TripPlannerScreen({ tripId }: Props) {
                 <Pressable
                   style={{ flex: 1 }}
                   onPress={() => {
-                    runProgrammaticCameraMove(() => {
-                      cameraRef.current?.setCamera({
-                        centerCoordinate: [item.lng, item.lat],
-                        zoomLevel: 14,
-                        animationDuration: 450,
-                        animationMode: "easeTo",
-                      });
-                    });
+                    void selectSearchResult(item);
                   }}
                 >
-                  <Text style={styles.searchTitle}>{item.name}</Text>
-                  {item.fullName ? (
-                    <Text style={styles.searchSubtitle} numberOfLines={1}>
-                      {item.fullName}
-                    </Text>
-                  ) : null}
+                  <Text style={styles.searchTitle} numberOfLines={1}>
+                    {item.name}
+                    {item.fullName ? <Text style={styles.searchAddressInline}> - {item.fullName}</Text> : null}
+                  </Text>
                 </Pressable>
                 <Pressable
-                  style={styles.addToRouteBtn}
+                  style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
                   onPress={() => {
                     void addPoiToRoute({ name: item.name, coordinates: [item.lng, item.lat] });
+                    resetSearchUi();
                   }}
                 >
-                  <Text style={styles.addToRouteBtnText}>Add to route</Text>
+                  <Text style={styles.addToRouteBtnText}>{searchIntent === "ADD_STOP" ? "Select stop" : "Add to route"}</Text>
                 </Pressable>
               </View>
             ))}
           </ScrollView>
+        ) : null}
+        {selectedSearchLocation ? (
+          <View style={styles.placeCard}>
+            <Text style={styles.poiDetailTitle}>{selectedSearchLocation.name}</Text>
+            {selectedSearchLocation.fullName ? (
+              <Text style={styles.searchSubtitle} numberOfLines={2}>
+                {selectedSearchLocation.fullName}
+              </Text>
+            ) : null}
+            <Text style={styles.searchDistance}>
+              {currentLocation
+                ? `${formatNearbyDistance(
+                    geoDistanceMeters(currentLocation, [selectedSearchLocation.lng, selectedSearchLocation.lat]),
+                    imperialDistance
+                  )} away`
+                : "Distance unavailable"}
+            </Text>
+            <Text style={styles.searchSubtitle}>ETA: {readableDuration} • Status: Unknown</Text>
+            <View style={styles.placeCardActions}>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => {
+                  void addPoiToRoute({
+                    name: selectedSearchLocation.name,
+                    coordinates: [selectedSearchLocation.lng, selectedSearchLocation.lat],
+                  });
+                }}
+              >
+                <Text style={styles.addToRouteBtnText}>Directions</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => setSearchIntent("ADD_STOP")}
+              >
+                <Text style={styles.addToRouteBtnText}>Add stop</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => notify("info", "Saved places are coming soon.")}
+              >
+                <Text style={styles.addToRouteBtnText}>Save</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => Alert.alert("Share", selectedSearchLocation.fullName || selectedSearchLocation.name)}
+              >
+                <Text style={styles.addToRouteBtnText}>Share</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+        {selectedWaypoint ? (
+          <View style={styles.placeCard}>
+            <Text style={styles.poiDetailTitle}>Stop {selectedWaypoint.index + 1}: {selectedWaypoint.waypoint.name}</Text>
+            <Text style={styles.searchSubtitle}>
+              Lat {selectedWaypoint.waypoint.lat.toFixed(5)}, Lng {selectedWaypoint.waypoint.lng.toFixed(5)}
+            </Text>
+            <View style={styles.placeCardActions}>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => {
+                  runProgrammaticCameraMove(() => {
+                    cameraRef.current?.setCamera({
+                      centerCoordinate: [selectedWaypoint.waypoint.lng, selectedWaypoint.waypoint.lat],
+                      zoomLevel: 15,
+                      animationDuration: 450,
+                      animationMode: "easeTo",
+                    });
+                  });
+                }}
+              >
+                <Text style={styles.addToRouteBtnText}>Focus</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => setSelectedWaypointKey(null)}
+              >
+                <Text style={styles.addToRouteBtnText}>Close</Text>
+              </Pressable>
+            </View>
+          </View>
         ) : null}
         {(routeCoords?.length ?? 0) > 1 || waypoints.length > 0 ? (
           <View style={styles.modeTabs}>
@@ -896,14 +1205,14 @@ export function TripPlannerScreen({ tripId }: Props) {
                       });
                     }}
                   >
-                    <Text style={styles.searchTitle}>{poi.name}</Text>
-                    <Text style={styles.searchSubtitle} numberOfLines={1}>
-                      {poi.address || "Address unavailable"}
+                    <Text style={styles.searchTitle} numberOfLines={1}>
+                      {poi.name}
+                      <Text style={styles.searchAddressInline}> - {poi.address || "Address unavailable"}</Text>
                     </Text>
                     <Text style={styles.searchDistance}>{distanceLabel}</Text>
                   </Pressable>
                   <Pressable
-                    style={styles.addToRouteBtn}
+                    style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
                     onPress={() => {
                       void addPoiToRoute({ name: poi.name, coordinates: poi.coordinates });
                     }}
@@ -980,30 +1289,101 @@ export function TripPlannerScreen({ tripId }: Props) {
           </Text>
           <View style={styles.row}>
             <Pressable
-              style={styles.smallBtn}
+              style={[styles.smallBtn, isTripFinalized ? styles.smallBtnNeutral : styles.smallBtnSuccess]}
+              disabled={finalizeLoading || publishToggleLoading || !trip}
               onPress={async () => {
+                if (!trip) return;
                 try {
-                  const result = await api.publishTrip(tripId);
-                  Alert.alert("Share link", result.shareUrl);
+                  setFinalizeLoading(true);
+                  if (isTripFinalized) {
+                    await api.unfinalizeTrip(tripId);
+                    notify("info", "Trip moved back to draft.");
+                  } else {
+                    await api.finalizeTrip(tripId);
+                    notify("success", "Trip finalized. You can now publish.");
+                  }
+                  await refetch();
                 } catch (error) {
-                  Alert.alert("Publish failed", String(error));
+                  Alert.alert(isTripFinalized ? "Unfinalize failed" : "Finalize failed", String(error));
+                } finally {
+                  setFinalizeLoading(false);
                 }
               }}
             >
-              <Text style={styles.smallBtnText}>Publish</Text>
+              <Text style={styles.smallBtnText}>
+                {finalizeLoading
+                  ? isTripFinalized
+                    ? "Unfinalizing..."
+                    : "Finalizing..."
+                  : isTripFinalized
+                    ? "Unfinalize"
+                    : "Finalize"}
+              </Text>
             </Pressable>
             <Pressable
-              style={styles.smallBtn}
+              style={[
+                styles.smallBtn,
+                isTripPublished ? styles.smallBtnDanger : styles.smallBtnSuccess,
+                !isTripFinalized && styles.smallBtnDisabled,
+              ]}
+              disabled={publishToggleLoading || finalizeLoading || !isTripFinalized}
               onPress={async () => {
+                if (!trip) return;
                 try {
-                  await api.unpublishTrip(tripId);
-                  Alert.alert("Trip is now private");
+                  setPublishToggleLoading(true);
+                  if (isTripPublished) {
+                    await api.unpublishTrip(tripId);
+                    Alert.alert("Trip is now private");
+                  } else {
+                    const result = await api.publishTrip(tripId);
+                    Alert.alert("Share link", result.shareUrl);
+                  }
+                  await refetch();
                 } catch (error) {
-                  Alert.alert("Unpublish failed", String(error));
+                  const message = error instanceof Error ? error.message : String(error);
+                  if (!isTripFinalized && !isTripPublished) {
+                    Alert.alert("Finalize required", "Finalize this trip before publishing/sharing.");
+                  } else {
+                    Alert.alert(isTripPublished ? "Unpublish failed" : "Publish failed", message);
+                  }
+                } finally {
+                  setPublishToggleLoading(false);
                 }
               }}
             >
-              <Text style={styles.smallBtnText}>Unpublish</Text>
+              <Text style={styles.smallBtnText}>
+                {publishToggleLoading
+                  ? isTripPublished
+                    ? "Unpublishing..."
+                    : "Publishing..."
+                  : isTripPublished
+                    ? "Unpublish"
+                    : isTripFinalized
+                      ? "Publish"
+                      : "Publish (Finalize first)"}
+              </Text>
+            </Pressable>
+          </View>
+          <View style={styles.row}>
+            <Pressable
+              style={[styles.smallBtn, styles.smallBtnWhatsApp]}
+              disabled={shareLoading || pdfLoading || finalizeLoading || publishToggleLoading || !trip}
+              onPress={() => {
+                void shareOnWhatsApp();
+              }}
+            >
+              <Text style={styles.smallBtnText}>{shareLoading ? "Sharing..." : "Share via WhatsApp"}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.smallBtn, styles.smallBtnPdf, (!isTripFinalized || pdfLoading) && styles.smallBtnDisabled]}
+              disabled={pdfLoading || shareLoading || !isTripFinalized}
+              onPress={() => {
+                void shareDetailedPdf();
+              }}
+            >
+              <Text style={styles.smallBtnText}>
+                {pdfLoading ? "Preparing PDF..." : "Share detailed PDF"}
+              </Text>
             </Pressable>
           </View>
           <Text style={styles.dragHint}>Press and drag the handle to reorder stops.</Text>
@@ -1026,12 +1406,24 @@ export function TripPlannerScreen({ tripId }: Props) {
             }}
             renderItem={({ item, drag, isActive, getIndex }: RenderItemParams<(Waypoint & { __dragKey: string })>) => {
               const idx = getIndex() ?? 0;
+              const nextWaypoint = waypoints[idx + 1];
+              const legDistanceLabel = nextWaypoint
+                ? formatDistanceReadable(
+                    geoDistanceMeters([item.lng, item.lat], [nextWaypoint.lng, nextWaypoint.lat]),
+                    imperialDistance
+                  )
+                : null;
               return (
                 <View style={[styles.stopRow, isActive && styles.stopRowActive]}>
                   <Pressable style={styles.dragHandle} onPressIn={drag}>
                     <Text style={styles.dragHandleText}>≡</Text>
                   </Pressable>
-                  <Text style={[styles.stop, styles.stopName]}>{idx + 1}. {item.name}</Text>
+                  <View style={styles.stopNameBlock}>
+                    <Text style={[styles.stop, styles.stopName]}>{idx + 1}. {item.name}</Text>
+                    <Text style={styles.stopMeta}>
+                      {legDistanceLabel ? `${legDistanceLabel} to next stop` : "Final stop"}
+                    </Text>
+                  </View>
                   <Pressable
                     style={styles.removeStopBtn}
                     onPress={() => {
@@ -1066,6 +1458,14 @@ export function TripPlannerScreen({ tripId }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   map: { flex: 1 },
+  mapDimmer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(15,23,42,0.18)",
+  },
   topSearch: {
     position: "absolute",
     top: 56,
@@ -1111,6 +1511,7 @@ const styles = StyleSheet.create({
   stopList: { flexGrow: 0, minHeight: 120 },
   stopListContent: { paddingBottom: 28 },
   searchWrap: { flexDirection: "row", gap: 8, alignItems: "center" },
+  searchInputRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   modeTabs: { flexDirection: "row", gap: 8 },
   modeTab: {
     borderWidth: 1,
@@ -1159,6 +1560,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase",
   },
+  recentSearchesWrap: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#dbeafe",
+    backgroundColor: "#eff6ff",
+    padding: 8,
+    gap: 6,
+  },
+  recentRow: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    backgroundColor: "#fff",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
   searchResult: {
     flexDirection: "row",
     alignItems: "center",
@@ -1167,27 +1584,60 @@ const styles = StyleSheet.create({
     borderColor: "#d1d5db",
     borderRadius: 10,
     paddingHorizontal: 10,
-    paddingVertical: 9,
+    paddingVertical: 6,
     backgroundColor: "#fff",
   },
   searchResultSelected: {
     borderColor: "#2563eb",
     backgroundColor: "#eff6ff",
   },
-  searchTitle: { fontSize: 14, fontWeight: "600", color: "#111827" },
+  searchTitle: { fontSize: 13, fontWeight: "600", color: "#111827" },
+  searchAddressInline: {
+    fontStyle: "italic",
+    fontWeight: "400",
+    color: "#6b7280",
+    fontSize: 12,
+  },
   searchSubtitle: { marginTop: 2, color: "#6b7280", fontSize: 12 },
   searchDistance: { marginTop: 2, color: "#475569", fontSize: 11, fontWeight: "600" },
   searchAction: { color: "#2563eb", fontWeight: "700", fontSize: 12 },
   addToRouteBtn: {
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-    backgroundColor: "#eff6ff",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     alignSelf: "center",
+    backgroundColor: "rgba(37,99,235,0.08)",
+    transform: [{ scale: 1 }],
   },
-  addToRouteBtnText: { color: "#1d4ed8", fontWeight: "700", fontSize: 12 },
+  addToRouteBtnPressed: {
+    backgroundColor: "rgba(37,99,235,0.18)",
+    transform: [{ scale: 0.97 }],
+  },
+  addToRouteBtnText: { color: "#2563eb", fontWeight: "500", fontSize: 12 },
+  secondaryChipBtn: {
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    height: 34,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+  },
+  secondaryChipBtnActive: { borderColor: "#1d4ed8", backgroundColor: "#dbeafe" },
+  secondaryChipText: { color: "#1e293b", fontWeight: "700", fontSize: 12 },
+  secondaryChipTextActive: { color: "#1d4ed8" },
+  clearSearchBtn: {
+    borderRadius: 8,
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    height: 34,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearSearchBtnText: { color: "#334155", fontWeight: "700", fontSize: 12 },
   queuedBlock: { gap: 4, marginTop: 2 },
   queuedRow: {
     flexDirection: "row",
@@ -1203,7 +1653,9 @@ const styles = StyleSheet.create({
   queuedName: { flex: 1, color: "#111827", fontSize: 13, marginRight: 8 },
   removeText: { color: "#2563eb", fontWeight: "600", fontSize: 12 },
   stop: { fontSize: 14 },
+  stopNameBlock: { flex: 1 },
   stopName: { flex: 1 },
+  stopMeta: { marginTop: 1, fontSize: 11, color: "#64748b", fontWeight: "500" },
   stopRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 2 },
   stopRowActive: {
     backgroundColor: "#eff6ff",
@@ -1243,6 +1695,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  smallBtnSuccess: { backgroundColor: "#2563eb" },
+  smallBtnDanger: { backgroundColor: "#b91c1c" },
+  smallBtnNeutral: { backgroundColor: "#475569" },
+  smallBtnWhatsApp: { backgroundColor: "#16a34a" },
+  smallBtnPdf: { backgroundColor: "#7c3aed" },
   smallBtnDisabled: { backgroundColor: "#93c5fd" },
   smallBtnText: { color: "#fff", fontWeight: "700", fontSize: 12 },
   menuTrigger: {
@@ -1299,6 +1756,28 @@ const styles = StyleSheet.create({
     zIndex: 45,
   },
   myLocationIcon: { fontSize: 16, color: "#111827", fontWeight: "700" },
+  selectedSearchMarker: {
+    width: 16,
+    height: 16,
+    borderRadius: 999,
+    borderWidth: 3,
+    borderColor: "#ffffff",
+    backgroundColor: "#1d4ed8",
+  },
+  placeCard: {
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: "#ffffff",
+    gap: 4,
+  },
+  placeCardActions: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 4,
+    flexWrap: "wrap",
+  },
   poiDetailCard: {
     borderWidth: 1,
     borderColor: "#cbd5e1",

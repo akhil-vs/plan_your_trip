@@ -29,8 +29,12 @@ const mapRow = (row: NativePoiRow): POIFeature => ({
 });
 
 export const nativePoiDiscover = {
-  isAvailable(): boolean {
-    return Platform.OS === "android" && Boolean(moduleRef);
+  isAvailable(accessToken?: string): boolean {
+    const hasBridge =
+      Boolean(moduleRef) &&
+      typeof moduleRef?.searchNearby === "function" &&
+      typeof moduleRef?.searchAlongRoute === "function";
+    return Platform.OS === "android" && hasBridge && Boolean(accessToken?.trim());
   },
   async searchNearby(accessToken: string, categories: string[], location: [number, number]): Promise<POIFeature[]> {
     if (!moduleRef) return [];
