@@ -145,7 +145,7 @@ export default function TripsScreen() {
                   style: "destructive",
                   onPress: async () => {
                     await signOut();
-                    router.replace("/login");
+                    router.replace("/landing");
                   },
                 },
               ]);
@@ -315,14 +315,16 @@ export default function TripsScreen() {
             />
           )}
           ListHeaderComponent={header}
-          contentContainerStyle={[styles.listContent, { paddingBottom: 110 + insets.bottom }]}
+          contentContainerStyle={[styles.listContent, { paddingBottom: 130 + insets.bottom }]}
           onRefresh={refetch}
           refreshing={isFetching}
         />
       )}
       <View style={[styles.bottomMenu, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         <Pressable style={styles.bottomMenuItem} onPress={() => router.replace("/trips")}>
-          <Ionicons name="home" size={18} color={colors.brandPrimary} />
+          <View style={[styles.bottomMenuCircle, styles.bottomMenuCircleActive]}>
+            <Ionicons name="home" size={18} color="#fff" />
+          </View>
           <Text style={[styles.bottomMenuLabel, styles.bottomMenuLabelActive]}>Home</Text>
         </Pressable>
         <Pressable
@@ -335,11 +337,15 @@ export default function TripsScreen() {
             openNewItineraryModal();
           }}
         >
-          <Ionicons name="map-outline" size={18} color={colors.textMuted} />
+          <View style={styles.bottomMenuCircle}>
+            <Ionicons name="map-outline" size={18} color={colors.textMuted} />
+          </View>
           <Text style={styles.bottomMenuLabel}>Planner</Text>
         </Pressable>
         <Pressable style={styles.bottomMenuItem} onPress={() => router.push("/profile")}>
-          <Ionicons name="person-outline" size={18} color={colors.textMuted} />
+          <View style={styles.bottomMenuCircle}>
+            <Ionicons name="person-outline" size={18} color={colors.textMuted} />
+          </View>
           <Text style={styles.bottomMenuLabel}>Profile</Text>
         </Pressable>
       </View>
@@ -393,21 +399,31 @@ const styles = StyleSheet.create({
     right: space.lg,
     bottom: 0,
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "space-between",
     alignItems: "center",
+    paddingTop: 10,
+    paddingHorizontal: 8,
+  },
+  bottomMenuItem: { alignItems: "center", justifyContent: "center", gap: 6, minWidth: 72 },
+  bottomMenuCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    paddingTop: 12,
     shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 4,
   },
-  bottomMenuItem: { alignItems: "center", justifyContent: "center", gap: 3, minWidth: 72 },
+  bottomMenuCircleActive: {
+    backgroundColor: colors.brandPrimary,
+    borderColor: colors.brandPrimary,
+  },
   bottomMenuLabel: { fontSize: 12, color: colors.textMuted, fontWeight: "500" },
   bottomMenuLabelActive: { color: colors.brandPrimary, fontWeight: "700" },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

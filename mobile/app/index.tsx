@@ -15,7 +15,7 @@ export default function Index() {
     );
   }
 
-  if (!user) return <Redirect href="/login" />;
+  if (!user) return <Redirect href="/landing" />;
   if (!user.onboardingComplete) return <Redirect href="/onboarding" />;
   return <Redirect href="/trips" />;
 }
