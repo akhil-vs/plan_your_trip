@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
+import { randomUUID } from "@/lib/randomUuid";
 import { unstable_cache } from "next/cache";
 
 function normalizeSuggestCacheKey(
@@ -135,7 +135,7 @@ export async function GET(req: NextRequest) {
   const limit = searchParams.get("limit") || "8";
   const language = searchParams.get("language") || "en";
   const proximity = searchParams.get("proximity");
-  const sessionToken = searchParams.get("session_token") || crypto.randomUUID();
+  const sessionToken = searchParams.get("session_token") || randomUUID();
 
   if (mapboxId) {
     const retrieved = await getCachedRetrieve(mapboxId, language, token, sessionToken);

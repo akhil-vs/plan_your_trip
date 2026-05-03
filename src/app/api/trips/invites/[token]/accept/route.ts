@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { createTripEvent } from "@/lib/tripEvents";
+import { createInAppNotification } from "@/lib/inAppNotifications";
 
 export async function POST(
   req: NextRequest,
@@ -49,6 +50,38 @@ export async function POST(
     authUser.id,
     authUser.name ?? null
   );
+
+  try {
+    const trip = await prisma.trip.findUnique({
+      where: { id: invite.tripId },
+      select: { userId: true, name: true },
+    });
+    const tripName = trip?.name?.trim() || "your trip";
+    const who = authUser.name || authUser.email || "A collaborator";
+    const title = "Invite accepted";
+    const body = `${who} joined “${tripName}” from your invite.`;
+    const href = `/planner/${invite.tripId}`;
+    const data = { tripId: invite.tripId, tripName, href };
+
+    const recipients = new Set<string>();
+    if (trip?.userId && trip.userId !== authUser.id) {
+      recipients.add(trip.userId);
+    }
+    if (invite.senderId && invite.senderId !== authUser.id) {
+      recipients.add(invite.senderId);
+    }
+    for (const userId of recipients) {
+      await createInAppNotification({
+        userId,
+        type: "TRIP_INVITE_ACCEPTED",
+        title,
+        body,
+        data,
+      });
+    }
+  } catch {
+    // Best-effort; membership is already persisted.
+  }
 
   return NextResponse.json({ success: true, tripId: invite.tripId, role: invite.role });
 }

@@ -1,3 +1,5 @@
+import { randomUUID } from "@/lib/randomUuid";
+
 export interface SearchResult {
   id: string;
   name: string;
@@ -6,10 +8,10 @@ export interface SearchResult {
   lng?: number;
 }
 
-let searchSessionToken = crypto.randomUUID();
+let searchSessionToken = randomUUID();
 
 export function resetSearchSession() {
-  searchSessionToken = crypto.randomUUID();
+  searchSessionToken = randomUUID();
 }
 
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
+import { randomUUID } from "@/lib/randomUuid";
 import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
 import { sendTripInviteEmail } from "@/lib/email";
 import { canUseCollaboration } from "@/lib/subscription";
+import { notifyRegisteredUserByEmail } from "@/lib/inAppNotifications";
 
 export async function GET(
   req: NextRequest,
@@ -60,7 +61,7 @@ export async function POST(
     return NextResponse.json({ error: "email and valid role are required" }, { status: 400 });
   }
 
-  const token = crypto.randomUUID();
+  const token = randomUUID();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7);
   const existingPending = await prisma.tripInvite.findFirst({
     where: { tripId, email, status: "PENDING", expiresAt: { gt: new Date() } },
@@ -105,6 +106,29 @@ export async function POST(
     authUser.id,
     authUser.name ?? null
   );
+
+  try {
+    const tripName = trip?.name?.trim() || "Untitled trip";
+    const inviter = authUser.name || authUser.email || "Someone";
+    const roleLabel = role === "EDITOR" ? "an editor" : "a viewer";
+    await notifyRegisteredUserByEmail(
+      email,
+      {
+        type: "TRIP_INVITE_RECEIVED",
+        title: "Trip collaboration invite",
+        body: `${inviter} invited you to plan “${tripName}” as ${roleLabel}.`,
+        data: {
+          tripId,
+          tripName,
+          inviteId: invite.id,
+          href: `/invite/${invite.token}`,
+        },
+      },
+      { exceptUserId: authUser.id }
+    );
+  } catch {
+    // In-app notification is best-effort; invite + email already succeeded.
+  }
 
   return NextResponse.json({
     ...invite,

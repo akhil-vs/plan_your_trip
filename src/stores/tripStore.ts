@@ -91,6 +91,36 @@ interface TripState {
 
 let waypointCounter = 0;
 
+/** Max GPS drift between two "current location" reads we still treat as the same place. */
+const CURRENT_LOCATION_RETURN_MATCH_METERS = 500;
+
+function haversineMeters(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const R = 6371000;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Labels used when inserting the device GPS point (web SearchInput, etc.). */
+function isLiveLocationLabel(name: string | undefined): boolean {
+  if (!name) return false;
+  const n = name.trim().toLowerCase();
+  return (
+    n === "current location" ||
+    n === "my location" ||
+    n === "your location" ||
+    n === "gps location"
+  );
+}
+
 const initialState = {
   tripId: null,
   tripName: "",
@@ -168,12 +198,28 @@ export const useTripStore = create<TripState>((set, get) => ({
       return;
     }
 
+    const first = waypoints[0];
+    // Second (or later) live-GPS stop near the first stop: treat as "return here" / round-trip
+    // and append at the end. Otherwise nearest-neighbor ties at distance 0 put the duplicate
+    // immediately after index 0 and optimization keeps both at the start.
+    if (
+      isLiveLocationLabel(wp.name) &&
+      isLiveLocationLabel(first.name) &&
+      haversineMeters(first, wp) <= CURRENT_LOCATION_RETURN_MATCH_METERS
+    ) {
+      get().addWaypoint(wp);
+      return;
+    }
+
     let nearestIdx = 0;
     let minDist = Infinity;
     waypoints.forEach((w, i) => {
       const d = Math.hypot(w.lat - wp.lat, w.lng - wp.lng);
-      if (d < minDist) {
+      if (d < minDist - 1e-12) {
         minDist = d;
+        nearestIdx = i;
+      } else if (Math.abs(d - minDist) <= 1e-12 && i > nearestIdx) {
+        // Prefer the last waypoint among ties so identical coordinates stack toward the route end.
         nearestIdx = i;
       }
     });

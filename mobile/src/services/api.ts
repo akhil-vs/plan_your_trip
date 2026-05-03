@@ -1,4 +1,5 @@
 import { env } from "@/config/env";
+import { randomUUID } from "@/lib/randomUuid";
 import type {
   ApiUser,
   DiscoveryGem,
@@ -161,11 +162,7 @@ export const api = {
     const token = env.mapboxPublicToken;
     if (!token || !query.trim()) return [];
     const limit = Number.isFinite(options?.limit) ? Math.max(1, Math.min(15, options?.limit ?? 10)) : 10;
-    const sessionToken =
-      options?.sessionToken ||
-      (typeof globalThis.crypto?.randomUUID === "function"
-        ? globalThis.crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const sessionToken = options?.sessionToken || randomUUID();
     const proximityKey = proximity ? `${proximity.lat.toFixed(4)},${proximity.lng.toFixed(4)}` : "none";
     const normalizedQuery = query.trim().toLowerCase();
     const cacheKey = `${normalizedQuery}|${proximityKey}|${limit}|${sessionToken}`;
@@ -345,6 +342,26 @@ export const api = {
       body: JSON.stringify({ name, email, password }),
     }),
   me: () => request<ApiUser>("/api/account/me"),
+  notifications: (take = 30) =>
+    request<{
+      notifications: Array<{
+        id: string;
+        type: string;
+        title: string;
+        body: string;
+        data: unknown;
+        readAt: string | null;
+        createdAt: string;
+      }>;
+      unreadCount: number;
+    }>(`/api/notifications?take=${take}`),
+  notificationMarkRead: (id: string) =>
+    request<{ success: boolean; alreadyRead?: boolean }>(`/api/notifications/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ read: true }),
+    }),
+  notificationsMarkAllRead: () =>
+    request<{ success: boolean; count: number }>("/api/notifications/read-all", { method: "POST" }),
   trips: () => request<{ myTrips: Trip[]; publicTrips: Trip[] }>("/api/trips"),
   trip: (tripId: string) => request<Trip & { currentUserRole?: string }>(`/api/trips/${tripId}`),
   /** Body should match web `PlannerSidebar` save / POST `/api/trips` (use `buildCreateTripBody`). */

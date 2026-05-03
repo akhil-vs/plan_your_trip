@@ -2,16 +2,14 @@
 
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { useMapStore } from "@/stores/mapStore";
+import { useMapStore, type CollaborationTab } from "@/stores/mapStore";
 import { useTripStore, WaypointData } from "@/stores/tripStore";
 import { getDirections, optimizeWaypoints } from "@/lib/api/mapbox";
 import { SearchInput } from "./SearchInput";
 import { WaypointList } from "./WaypointList";
-import { FilterPanel } from "./FilterPanel";
 import { PlaceDetailPanel } from "./PlaceDetailPanel";
 import { TripMembersPanel } from "./TripMembersPanel";
 import { TripMemberChat } from "./TripMemberChat";
-import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +25,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -35,10 +34,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import Link from "next/link";
 import {
   MapPin,
-  Save,
   Loader2,
   PanelLeftClose,
   PanelLeft,
@@ -55,13 +60,17 @@ import {
   ChevronRight,
   Users,
   MessageCircle,
+  ClipboardList,
   FileDown,
   Globe,
   History,
   Compass,
   X,
   Trash2,
+  MoreVertical,
   Shield,
+  Search,
+  Clock,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useAdminAccess } from "@/contexts/AdminAccessContext";
@@ -70,6 +79,8 @@ import {
   canUseCollaboration,
 } from "@/lib/subscription";
 import { toast } from "@/lib/toast";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { placeNameForActivity } from "@/lib/placeDisplayName";
 
 interface PlannerSidebarProps {
   tripId?: string;
@@ -161,6 +172,58 @@ const STARTER_TEMPLATES: StarterTemplate[] = [
   },
 ];
 
+type SidebarRouteToolsProps = {
+  canEditTrip: boolean;
+  pickPointsMode: boolean;
+  onTogglePick: () => void;
+  hasRouteGeometry: boolean;
+  onExplore: () => void;
+};
+
+function SidebarRouteTools({
+  canEditTrip,
+  pickPointsMode,
+  onTogglePick,
+  hasRouteGeometry,
+  onExplore,
+}: SidebarRouteToolsProps) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={onTogglePick}
+        disabled={!canEditTrip}
+        className={`h-9 gap-1.5 font-medium shadow-sm ${
+          pickPointsMode
+            ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800 hover:text-white"
+            : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+        }`}
+      >
+        <MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Pick points
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={onExplore}
+        disabled={!canEditTrip || !hasRouteGeometry}
+        title={
+          hasRouteGeometry
+            ? undefined
+            : "Add stops and wait for the route line to appear on the map"
+        }
+        className="h-9 gap-1.5 border-slate-200 bg-white font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+      >
+        <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Explore attractions
+      </Button>
+    </div>
+  );
+}
+
 export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const {
     sidebarOpen,
@@ -176,10 +239,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     setRouteExploreOpen,
     setRouteSummaryOpen,
     setActiveWaypoint,
-    membersSheetOpen,
-    setMembersSheetOpen,
-    chatSheetOpen,
-    setChatSheetOpen,
+    collaborationPanelOpen,
+    collaborationTab,
+    openCollaborationPanel,
+    setCollaborationPanelOpen,
+    setCollaborationTab,
   } = useMapStore();
   const {
     tripId: activeTripId,
@@ -230,17 +294,16 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const [tripStatus, setTripStatus] = useState<TripStatus>("DRAFT");
   const [isPublic, setIsPublic] = useState(false);
   const [memberCount, setMemberCount] = useState(1);
-  const [advancedActionsOpen, setAdvancedActionsOpen] = useState(false);
-  const [activityOpen, setActivityOpen] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityEvents, setActivityEvents] = useState<TripTimelineEvent[]>([]);
   const [showOnboardingCard, setShowOnboardingCard] = useState(false);
-  const [saveNameDialogOpen, setSaveNameDialogOpen] = useState(false);
-  const [saveNameInput, setSaveNameInput] = useState(DEFAULT_SAVE_NAME);
   const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
   const [deleteTripDialogOpen, setDeleteTripDialogOpen] = useState(false);
   const [deletingTrip, setDeletingTrip] = useState(false);
   const lastEventAtRef = useRef(0);
+  const routeSectionRef = useRef<HTMLElement | null>(null);
+  const saveInFlightRef = useRef(false);
+  const performSaveRef = useRef<(name: string) => Promise<void>>(async () => {});
   const router = useRouter();
 
   const canEditTrip =
@@ -266,8 +329,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   };
 
   const lifecycleHintByStage: Record<LifecycleStage, string> = {
-    DRAFT: "Add key stops and save your first draft.",
-    PLANNING: "Review day-by-day details, then finalize your itinerary.",
+    DRAFT: "Add key stops—your draft saves automatically.",
+    PLANNING: "",
     FINALIZED: "Your itinerary is ready to publish and share.",
     SHARED: "Your shared itinerary is available to collaborators and viewers.",
   };
@@ -279,8 +342,13 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   ) => {
     const actor = actorName || "Someone";
     switch (eventType) {
-      case "trip.updated":
+      case "trip.updated": {
+        const lines = payload?.activityLines;
+        if (Array.isArray(lines) && typeof lines[0] === "string" && lines[0].trim()) {
+          return `${actor} saved: ${lines[0]}`;
+        }
         return `${actor} updated itinerary details.`;
+      }
       case "trip.created":
         return `${actor} created this itinerary.`;
       case "trip.finalized":
@@ -308,40 +376,89 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     }
   };
 
-  const formatEventMessage = (evt: TripTimelineEvent) => {
+  /** Splits server-written activity lines: true route permutations vs other edits. */
+  const splitActivityDetailLines = (lines: string[]) => {
+    const primary: string[] = [];
+    const reorder: string[] = [];
+    for (const line of lines) {
+      if (/\bre-ordered\b/i.test(line)) reorder.push(line);
+      else primary.push(line);
+    }
+    return { primary, reorder };
+  };
+
+  const getEventActivityLines = (evt: TripTimelineEvent): string[] => {
+    const p = evt.payload || {};
+    const raw = p.activityLines;
+    if (Array.isArray(raw)) {
+      return raw.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    }
+    if (evt.type === "trip.updated") {
+      const w = Number(p.waypointCount ?? 0);
+      const d = Number(p.dayCount ?? 0);
+      if (w || d) {
+        return [
+          `${w} stop(s), ${d} day plan(s). Older saves do not include a detailed change list.`,
+        ];
+      }
+    }
+    if (evt.type === "trip.created") {
+      const w = Number(p.waypointCount ?? 0);
+      if (w) return [`${w} stop(s) at creation. Older events do not list stop names.`];
+    }
+    return [];
+  };
+
+  const formatEventHeadline = (
+    evt: TripTimelineEvent,
+    detailLines: string[],
+    split: ReturnType<typeof splitActivityDetailLines>
+  ): string => {
     const payload = evt.payload || {};
     const actorName = (payload.actorName as string) || "Someone";
+    const { primary, reorder } = split;
     switch (evt.type) {
       case "trip.updated":
-        return `${actorName} updated the itinerary (${Number(payload.waypointCount || 0)} stops, ${Number(
-          payload.dayCount || 0
-        )} days).`;
+        if (detailLines.length === 0) return `${actorName} saved the itinerary`;
+        if (primary.length === 1 && reorder.length === 0 && detailLines.length === 1) {
+          return primary[0]!;
+        }
+        if (primary.length === 1 && reorder.length > 0) {
+          return primary[0]!;
+        }
+        if (primary.length === 0 && reorder.length > 0) {
+          return `${actorName} re-ordered ${reorder.length} ${reorder.length === 1 ? "stop" : "stops"}`;
+        }
+        if (detailLines.length > 1) {
+          return `${actorName} updated the itinerary (${detailLines.length} changes)`;
+        }
+        return detailLines[0] ?? `${actorName} saved the itinerary`;
       case "trip.created":
-        return `${actorName} created this itinerary.`;
+        return `${actorName} created this itinerary`;
       case "trip.finalized":
-        return `${actorName} finalized the itinerary.`;
+        return `${actorName} finalized the itinerary`;
       case "trip.unfinalized":
-        return `${actorName} moved the itinerary back to draft.`;
+        return `${actorName} moved the itinerary back to draft`;
       case "trip.published":
-        return `${actorName} published this itinerary for sharing.`;
+        return `${actorName} published this itinerary for sharing`;
       case "trip.unpublished":
-        return `${actorName} unpublished this itinerary.`;
+        return `${actorName} unpublished this itinerary`;
       case "trip.invite.created":
         return `${actorName} invited ${(payload.email as string) || "a collaborator"} as ${
           (payload.role as string) || "member"
-        }.`;
+        }`;
       case "trip.invite.revoked":
-        return `${actorName} revoked an invite.`;
+        return `${actorName} revoked an invite`;
       case "trip.invite.accepted":
-        return `${actorName} accepted an invite.`;
+        return `${actorName} accepted an invite`;
       case "trip.member.upserted":
-        return `${actorName} changed ${(payload.email as string) || "a member"} role to ${
+        return `${actorName} changed ${(payload.email as string) || "a member"} to ${
           (payload.role as string) || "member"
-        }.`;
+        }`;
       case "trip.member.removed":
-        return `${actorName} removed a member.`;
+        return `${actorName} removed a member`;
       default:
-        return `${actorName} made an update.`;
+        return `${actorName} updated the itinerary`;
     }
   };
 
@@ -641,37 +758,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   const getDayTotalMinutes = (dayPlan: DayPlan) =>
     dayPlan.estimatedTravelMinutes + getDayVisitMinutes(dayPlan);
-
-  const getWaypointNameById = (id: string) =>
-    waypoints.find((w) => w.id === id)?.name;
-
-  const getDayRouteLabel = (dayPlan: DayPlan) => {
-    const dayIndex = optimizeDays.findIndex((d) => d.day === dayPlan.day);
-    const dayNames = dayPlan.waypointIds
-      .map((id) => getWaypointNameById(id))
-      .filter((name): name is string => Boolean(name));
-
-    if (dayNames.length === 0) {
-      return "";
-    }
-
-    const previousDay = dayIndex > 0 ? optimizeDays[dayIndex - 1] : null;
-    const previousDayLastId =
-      previousDay && previousDay.waypointIds.length > 0
-        ? previousDay.waypointIds[previousDay.waypointIds.length - 1]
-        : null;
-    const previousDayLastName = previousDayLastId
-      ? getWaypointNameById(previousDayLastId)
-      : null;
-
-    if (dayNames.length === 1) {
-      return previousDayLastName
-        ? `${previousDayLastName} -> ${dayNames[0]}`
-        : dayNames[0];
-    }
-
-    return dayNames.join(" -> ");
-  };
 
   const createSnapshot = (
     currentWaypoints: WaypointData[],
@@ -1018,6 +1104,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   const performSave = async (resolvedName: string) => {
     if (!session?.user || !canEditTrip) return;
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     const nameToPersist = resolvedName.trim() || DEFAULT_SAVE_NAME;
     setSaving(true);
     setSaved(false);
@@ -1102,37 +1190,33 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       setTimeout(() => setSaveError(""), 4000);
     } finally {
       setSaving(false);
+      saveInFlightRef.current = false;
     }
   };
 
-  const handleSave = async () => {
+  performSaveRef.current = performSave;
+
+  useEffect(() => {
     if (!session?.user || !canEditTrip) return;
-    if (!tripName.trim()) {
-      setSaveNameInput(DEFAULT_SAVE_NAME);
-      setSaveNameDialogOpen(true);
-      return;
-    }
-    await performSave(tripName.trim());
-  };
-
-  const confirmSaveWithChosenName = async () => {
-    const resolved = saveNameInput.trim() || DEFAULT_SAVE_NAME;
-    setTripName(resolved);
-    setSaveNameDialogOpen(false);
-    await performSave(resolved);
-  };
+    if (!hasUnsavedChanges) return;
+    if (saving) return;
+    const id = window.setTimeout(() => {
+      const name =
+        useTripStore.getState().tripName.trim() || DEFAULT_SAVE_NAME;
+      void performSaveRef.current(name);
+    }, 1500);
+    return () => window.clearTimeout(id);
+  }, [hasUnsavedChanges, saving, session?.user, canEditTrip]);
 
   const handleConfirmDiscardDraft = () => {
     setDiscardDraftDialogOpen(false);
     setEditingName(false);
-    setAdvancedActionsOpen(false);
     setSelectedPOI(null);
     setActiveWaypoint(null);
     setRouteSummaryOpen(false);
     setPickPointsMode(false);
     setRouteExploreOpen(false);
-    setMembersSheetOpen(false);
-    setChatSheetOpen(false);
+    setCollaborationPanelOpen(false);
     resetNewTripPlanner();
     toast.success("Draft discarded.");
     router.replace("/dashboard");
@@ -1214,10 +1298,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         nextPublic ? "Failed to make itinerary public" : "Failed to make itinerary private"
       );
     }
-  };
-
-  const handlePublish = async () => {
-    await handleSetVisibility(true);
   };
 
   const handleExportPdf = async () => {
@@ -1447,9 +1527,16 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   }, [effectiveTripId, session?.user?.id, timelineEnabled]);
 
   useEffect(() => {
-    if (!effectiveTripId || !session?.user?.id || !timelineEnabled) return;
+    if (!collaborationPanelOpen || collaborationTab !== "activity") return;
+    if (!effectiveTripId || !timelineEnabled) return;
     void loadActivityHistory();
-  }, [effectiveTripId, session?.user?.id, loadActivityHistory, timelineEnabled]);
+  }, [
+    collaborationPanelOpen,
+    collaborationTab,
+    effectiveTripId,
+    timelineEnabled,
+    loadActivityHistory,
+  ]);
 
   if (!sidebarOpen) {
     return (
@@ -1473,6 +1560,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               <Shield className="h-5 w-5" aria-hidden />
             </Link>
           )}
+          {session?.user ? (
+            <NotificationBell className="h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50 text-foreground" />
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -1517,56 +1607,136 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       />
       <div className="w-[min(100vw,400px)] max-w-full lg:w-[380px] h-full bg-white lg:border-r flex flex-col shrink-0 relative overflow-hidden lg:relative max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:shadow-2xl max-lg:rounded-r-xl">
       {/* Header */}
-      <div className="p-3 sm:p-4 border-b space-y-3 shrink-0">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-1 min-w-0">
-            <Link
-              href={session?.user ? "/dashboard" : "/"}
-              className="shrink-0 p-1.5 rounded-md hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors"
-              title={session?.user ? "Dashboard" : "Home"}
-            >
-              <Home className="h-5 w-5" />
-            </Link>
-            {adminReady && isAdminUser && (
+      <div className="shrink-0 border-b border-slate-200/80 bg-gradient-to-b from-slate-50/90 to-white">
+        <div className="px-3 pt-3 sm:px-4 sm:pt-4">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white px-1 py-1 shadow-sm">
+            <div className="flex min-w-0 flex-1 items-center gap-0.5">
               <Link
-                href="/admin"
-                className="shrink-0 p-1.5 rounded-md hover:bg-gray-100 text-amber-700 hover:text-amber-800 transition-colors"
-                title="Admin panel"
-                aria-label="Admin panel"
+                href={session?.user ? "/dashboard" : "/"}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                title={session?.user ? "Dashboard" : "Home"}
               >
-                <Shield className="h-5 w-5" aria-hidden />
+                <Home className="h-[1.15rem] w-[1.15rem]" aria-hidden />
               </Link>
-            )}
-            <MapPin className="h-5 w-5 text-blue-600 shrink-0" />
-            {editingName ? (
-              <div className="flex items-center gap-1 flex-1">
-                <Input
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  className="h-7 text-sm"
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      setTripName(nameInput);
-                      setEditingName(false);
+              {adminReady && isAdminUser && (
+                <Link
+                  href="/admin"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-amber-700 transition-colors hover:bg-amber-50 hover:text-amber-900"
+                  title="Admin panel"
+                  aria-label="Admin panel"
+                >
+                  <Shield className="h-[1.15rem] w-[1.15rem]" aria-hidden />
+                </Link>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-0.5">
+              {session?.user ? (
+                collaborationEnabled ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                        aria-label="Trip chat, members, and activity"
+                        onClick={() => openCollaborationPanel("chat")}
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      Chat, members, and activity
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 touch-manipulation rounded-lg text-slate-400"
+                          disabled
+                          aria-label="Trip collaboration — upgrade to Pro"
+                        >
+                          <MessageCircle className="h-4 w-4 opacity-60" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      Upgrade to Pro for chat, members, and activity
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              ) : null}
+              {session?.user ? (
+                <NotificationBell className="h-9 w-9 shrink-0 rounded-lg text-slate-700 hover:bg-slate-100" />
+              ) : null}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    aria-label="Jump to route and stops"
+                    onClick={() =>
+                      routeSectionRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      })
                     }
-                  }}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
-                  onClick={() => {
+                  >
+                    <ClipboardList className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Route & stops</TooltipContent>
+              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close sidebar"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-3 pb-1 pt-4 sm:px-4 sm:pb-2 sm:pt-5">
+          {editingName ? (
+            <div className="flex items-center gap-2">
+              <Input
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                className="h-10 text-base font-medium"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
                     setTripName(nameInput);
                     setEditingName(false);
-                  }}
-                >
-                  <Check className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ) : (
+                  }
+                }}
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 shrink-0 rounded-lg"
+                onClick={() => {
+                  setTripName(nameInput);
+                  setEditingName(false);
+                }}
+              >
+                <Check className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-0.5">
               <button
-                className="text-sm font-semibold truncate min-w-0 text-left flex items-center gap-1 hover:text-blue-600"
+                type="button"
+                className="group min-w-0 flex-1 rounded-lg py-0.5 text-left transition-colors hover:bg-slate-50/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                 disabled={!canEditTrip}
                 onClick={() => {
                   if (!canEditTrip) return;
@@ -1574,251 +1744,156 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   setEditingName(true);
                 }}
               >
-                {tripName.trim() ? (
-                  tripName
-                ) : (
-                  <span className="text-muted-foreground font-medium">Name your trip</span>
-                )}
-                <Pencil className="h-3 w-3 shrink-0 text-gray-400" />
+                <span
+                  className={`block truncate text-xl font-semibold leading-snug tracking-tight sm:text-[1.35rem] ${
+                    tripName.trim() ? "text-slate-900" : "text-muted-foreground"
+                  }`}
+                >
+                  {tripName.trim() ? tripName : "Name your trip"}
+                </span>
               </button>
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0 touch-manipulation"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <PanelLeftClose className="h-4 w-4" />
-          </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                disabled={!canEditTrip}
+                aria-label="Edit itinerary name"
+                onClick={() => {
+                  if (!canEditTrip) return;
+                  setNameInput(tripName);
+                  setEditingName(true);
+                }}
+              >
+                <Pencil className="h-4 w-4" aria-hidden />
+              </Button>
+              {session?.user && canManageTrip && effectiveTripId ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                      aria-label="Trip options"
+                    >
+                      <MoreVertical className="h-4 w-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" sideOffset={6} className="w-52">
+                    <DropdownMenuItem
+                      onClick={() => void handleSetVisibility(!isPublic)}
+                      disabled={!effectiveTripId}
+                    >
+                      <Globe className="h-4 w-4" />
+                      {isPublic ? "Make private" : "Make public"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => void handleFinalize()}
+                      disabled={!effectiveTripId || tripStatus === "FINALIZED"}
+                    >
+                      Finalize itinerary
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => setDeleteTripDialogOpen(true)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete itinerary
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </div>
+          )}
         </div>
 
         {session?.user && (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={tripStatus === "FINALIZED" ? "default" : "secondary"}>
-                  {lifecycleLabelByStage[lifecycleStage]}
-                </Badge>
-                <Badge variant="outline">{currentUserRole}</Badge>
-                <Badge variant="outline" className="gap-1">
-                  <Users className="h-3 w-3" />
-                  {memberCount}
-                </Badge>
+          <div className="space-y-2 px-3 pb-3 sm:px-4 sm:pb-4">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+              <span
+                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                  lifecycleStage === "SHARED"
+                    ? "bg-emerald-700 text-white"
+                    : tripStatus === "FINALIZED"
+                      ? "bg-slate-800 text-white"
+                      : "bg-slate-200/90 text-slate-700"
+                }`}
+              >
+                {lifecycleLabelByStage[lifecycleStage].toUpperCase()}
+              </span>
+              <Badge
+                variant="outline"
+                className="rounded-full border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-700"
+              >
+                {currentUserRole.toUpperCase()}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="gap-1 rounded-full border-slate-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-700"
+              >
+                <Users className="h-3 w-3 opacity-80" aria-hidden />
+                {memberCount}
+              </Badge>
+              {saving ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                  Saving…
+                </span>
+              ) : saveError ? (
+                <span className="text-[11px] text-destructive">{saveError}</span>
+              ) : saved && !hasUnsavedChanges ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+                  <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Saved
+                </span>
+              ) : hasUnsavedChanges && canEditTrip ? (
+                <span className="text-[11px] text-muted-foreground">Changes will save automatically</span>
+              ) : effectiveTripId && !hasUnsavedChanges ? (
+                <span className="text-[11px] font-medium text-emerald-700/90">All changes saved</span>
+              ) : null}
             </div>
+            {lifecycleHintByStage[lifecycleStage] ? (
               <p className="text-[11px] text-muted-foreground">
                 {lifecycleHintByStage[lifecycleStage]}
               </p>
-            <div className="flex flex-wrap items-center gap-2">
-                {!tripId ? (
-                  <Button
-                    onClick={handleSave}
-                    disabled={saving || waypoints.length === 0 || !canEditTrip || !hasUnsavedChanges}
-                    size="sm"
-                    className="w-full gap-1.5 min-h-9 touch-manipulation"
-                    variant={saved ? "outline" : "default"}
-                  >
-                    {saving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : saved ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    {saving ? "Saving..." : saved ? "Saved!" : "Save itinerary"}
-                  </Button>
-                ) : canEditTrip && hasUnsavedChanges ? (
-                  <Button
-                    onClick={handleSave}
-                    disabled={saving || waypoints.length === 0 || !canEditTrip || !hasUnsavedChanges}
-                    size="sm"
-                    className="w-full gap-1.5 min-h-9 touch-manipulation"
-                    variant={saved ? "outline" : "default"}
-                  >
-                    {saving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : saved ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    {saving ? "Saving..." : saved ? "Saved!" : "Save itinerary"}
-                  </Button>
-                ) : canManageTrip && lifecycleStage === "PLANNING" ? (
+            ) : null}
+            {(lifecycleStage === "SHARED" || (!tripId && waypoints.length > 0)) ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {lifecycleStage === "SHARED" ? (
                   <Button
                     size="sm"
-                    className="w-full min-h-9 touch-manipulation"
-                    onClick={handleFinalize}
-                    disabled={!effectiveTripId || tripStatus === "FINALIZED"}
-                  >
-                    Finalize itinerary
-                  </Button>
-                ) : canManageTrip && lifecycleStage === "FINALIZED" ? (
-                  <Button
-                    size="sm"
-                    className="w-full gap-1.5 min-h-9 touch-manipulation"
-                    onClick={handlePublish}
-                    disabled={!effectiveTripId || tripStatus !== "FINALIZED"}
-                  >
-                    <Globe className="h-4 w-4" />
-                    Publish itinerary
-                  </Button>
-                ) : lifecycleStage === "SHARED" ? (
-                  <Button
-                    size="sm"
-                    className="w-full gap-1.5 min-h-9 touch-manipulation"
+                    className="w-full gap-1.5 min-h-9 touch-manipulation sm:col-span-2"
                     onClick={handleExportPdf}
                     disabled={!effectiveTripId}
                   >
                     <FileDown className="h-4 w-4" />
                     Export itinerary PDF
                   </Button>
-                ) : (
+                ) : null}
+                {!tripId && waypoints.length > 0 ? (
                   <Button
-                    onClick={handleSave}
-                    disabled={saving || waypoints.length === 0 || !canEditTrip || !hasUnsavedChanges}
+                    type="button"
                     size="sm"
-                    className="w-full gap-1.5 min-h-9 touch-manipulation"
-                    variant={saved ? "outline" : "default"}
+                    variant="outline"
+                    className="gap-1.5 text-destructive border-destructive/35 hover:bg-destructive/10 sm:col-span-2"
+                    onClick={() => setDiscardDraftDialogOpen(true)}
                   >
-                    {saving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : saved ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    {saving ? "Saving..." : saved ? "Saved!" : "Save itinerary"}
+                    <Trash2 className="h-4 w-4" />
+                    Discard draft
                   </Button>
-                )}
+                ) : null}
               </div>
-              <button
-                type="button"
-                className="w-full flex items-center justify-between rounded-md border px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/40"
-                onClick={() => setAdvancedActionsOpen((prev) => !prev)}
-              >
-                More actions
-                {advancedActionsOpen ? (
-                  <ChevronUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                )}
-              </button>
-              {advancedActionsOpen && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      if (!timelineEnabled) return;
-                      setActivityOpen(true);
-                      void loadActivityHistory();
-                    }}
-                    disabled={!effectiveTripId || !timelineEnabled}
-                    className="gap-1.5"
-                  >
-                    <History className="h-4 w-4" />
-                    Activity
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setMembersSheetOpen(true);
-                    }}
-                    className="gap-1.5"
-                  >
-                    <Users className="h-4 w-4" />
-                    Members
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setChatSheetOpen(true);
-                    }}
-                    className="gap-1.5"
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                    Chat
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleExportPdf}
-                    disabled={!effectiveTripId || tripStatus !== "FINALIZED"}
-                    className="gap-1.5"
-                  >
-                    <FileDown className="h-4 w-4" />
-                    Export itinerary PDF
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={async () => {
-                      setDayPlannerOpen(true);
-                      await handleOptimize();
-                    }}
-                    disabled={optimizing || waypoints.length < 3 || !canEditTrip}
-                    className="gap-1.5"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    Regenerate day plan
-                  </Button>
-                  {!tripId && waypoints.length > 0 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 text-destructive border-destructive/35 hover:bg-destructive/10 sm:col-span-2"
-                      onClick={() => setDiscardDraftDialogOpen(true)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Discard draft
-                    </Button>
-                  )}
-                  {tripId && canManageTrip && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 text-destructive border-destructive/35 hover:bg-destructive/10 sm:col-span-2"
-                      onClick={() => setDeleteTripDialogOpen(true)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete itinerary
-                    </Button>
-                  )}
-                  {canManageTrip && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleFinalize}
-                        disabled={!effectiveTripId || tripStatus === "FINALIZED"}
-                      >
-                        Finalize itinerary
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void handleSetVisibility(!isPublic)}
-                        disabled={!effectiveTripId}
-                        className="gap-1.5"
-                      >
-                        <Globe className="h-4 w-4" />
-                        {isPublic ? "Make private" : "Make public"}
-                      </Button>
-                    </>
-                  )}
-                </div>
-              )}
-              {!collaborationEnabled && (
-                <p className="text-[11px] text-muted-foreground">
-                  Upgrade to Pro to unlock collaborators and activity timeline.
-                </p>
-              )}
+            ) : null}
+            {!collaborationEnabled && (
+              <p className="text-[11px] text-muted-foreground">
+                Upgrade to Pro to unlock collaborators and activity timeline.
+              </p>
+            )}
           </div>
         )}
+        <div className="space-y-3 px-3 pb-3 pt-1 sm:px-4 sm:pb-4">
         {showDayPlanner && optimizationHistory.length > 0 && (
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <Button
@@ -1842,9 +1917,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </div>
         )}
 
-        {saveError && (
-          <p className="text-xs text-red-500">{saveError}</p>
-        )}
         {actionError && <p className="text-xs text-red-500">{actionError}</p>}
         {actionNotice && <p className="text-xs text-emerald-600">{actionNotice}</p>}
         {optimizeSummary && (
@@ -1866,6 +1938,69 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         )}
 
         <SearchInput disabled={!canEditTrip} />
+        <section aria-label="Map actions" className="pt-1">
+          <SidebarRouteTools
+            canEditTrip={canEditTrip}
+            pickPointsMode={pickPointsMode}
+            onTogglePick={() => {
+              if (!canEditTrip) return;
+              setPickPointsMode(!pickPointsMode);
+            }}
+            hasRouteGeometry={Boolean(route?.geometry)}
+            onExplore={() => {
+              setPickPointsMode(false);
+              setRouteExploreOpen(true);
+            }}
+          />
+        </section>
+        {waypoints.length >= 3 && (
+          <div className="space-y-3 rounded-2xl border border-blue-100/90 bg-gradient-to-b from-blue-50/95 to-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 flex-1 text-[11px] font-bold uppercase tracking-[0.12em] text-blue-800">
+                Day-by-day itinerary
+              </p>
+              {showDayPlanner && optimizeDays.length > 0 && (
+                <Badge
+                  asChild
+                  variant="secondary"
+                  className="h-auto cursor-pointer border-emerald-200/90 bg-emerald-100 p-0 text-[10px] font-bold uppercase tracking-wide text-emerald-800 shadow-sm transition-colors hover:bg-emerald-200/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setDayPlannerOpen(true)}
+                    className="inline-flex items-center justify-center rounded-full px-2.5 py-1 outline-none"
+                    aria-label={`View generated day-by-day itinerary, ${optimizeDays.length} day${
+                      optimizeDays.length !== 1 ? "s" : ""
+                    }`}
+                  >
+                    {optimizeDays.length} day{optimizeDays.length !== 1 ? "s" : ""} ready
+                  </button>
+                </Badge>
+              )}
+            </div>
+            <Button
+              onClick={async () => {
+                setDayPlannerOpen(true);
+                if (!showDayPlanner && canEditTrip) {
+                  await handleOptimize();
+                }
+              }}
+              disabled={optimizing || !canEditTrip}
+              size="sm"
+              className="h-10 w-full gap-2 rounded-xl border-0 bg-slate-900 text-sm font-semibold text-white shadow-md hover:bg-slate-800 disabled:opacity-50"
+            >
+              {optimizing ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : showDayPlanner ? (
+                <RotateCcw className="h-4 w-4" aria-hidden />
+              ) : (
+                <Sparkles className="h-4 w-4" aria-hidden />
+              )}
+              {showDayPlanner ? "Regenerate smart itinerary" : "Generate smart itinerary"}
+            </Button>
+          </div>
+        )}
+        </div>
       </div>
 
       {/* Content - scrollable */}
@@ -1909,14 +2044,13 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                 ))}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Or search above, add your first stop, and save your draft.
+                Or search above, add your first stop—your draft saves automatically.
               </p>
             </section>
           )}
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-              <MapPin className="h-3.5 w-3.5" />
-              Route
+          <section ref={routeSectionRef} className="scroll-mt-3">
+            <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              Route stops
             </h3>
             <WaypointList disabled={!canEditTrip} />
             {waypoints.length === 0 && (
@@ -1926,83 +2060,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   Add at least 3 stops to unlock day-wise auto planning.
                 </p>
               </div>
-            )}
-            <Separator className="my-4" />
-            <div className="space-y-2">
-              <Button
-                size="sm"
-                variant={pickPointsMode ? "default" : "outline"}
-                onClick={() => {
-                  if (!canEditTrip) return;
-                  setPickPointsMode(!pickPointsMode);
-                }}
-                disabled={!canEditTrip}
-                className="w-full gap-2"
-              >
-                <MapPin className="h-4 w-4" />
-                {pickPointsMode ? "Pick mode: On" : "Pick points from map"}
-              </Button>
-              {route?.geometry && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setPickPointsMode(false);
-                    setRouteExploreOpen(true);
-                  }}
-                  disabled={!canEditTrip}
-                  className="w-full gap-2"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Explore attractions near route
-                </Button>
-              )}
-            </div>
-            <FilterPanel />
-            {waypoints.length >= 3 && (
-              <>
-                <Separator className="my-4" />
-                <div className="rounded-md border bg-blue-50/60 p-3 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">
-                      Day-by-Day Itinerary
-                    </p>
-                    {showDayPlanner && optimizeDays.length > 0 && (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px] font-medium bg-emerald-100 text-emerald-700 border-emerald-200"
-                      >
-                        Itinerary ready · {optimizeDays.length} day
-                        {optimizeDays.length !== 1 ? "s" : ""}
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Build your route first, then generate a day-by-day itinerary using opening
-                    hours and nearest-stop sequencing.
-                  </p>
-                  <Button
-                    onClick={async () => {
-                      setDayPlannerOpen(true);
-                      if (!showDayPlanner && canEditTrip) {
-                        await handleOptimize();
-                      }
-                    }}
-                    disabled={optimizing || !canEditTrip}
-                    size="sm"
-                    className="w-full gap-2"
-                  >
-                    {optimizing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
-                    )}
-                    {showDayPlanner
-                      ? "Regenerate Day-by-Day Itinerary"
-                      : "Generate Day-by-Day Itinerary"}
-                  </Button>
-                </div>
-              </>
             )}
           </section>
         </div>
@@ -2016,390 +2073,462 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         />
       )}
       <Sheet open={dayPlannerOpen} onOpenChange={setDayPlannerOpen}>
-        <SheetContent side="right" className="sm:max-w-lg w-[96vw] sm:w-[92vw]">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <CalendarDays className="h-4 w-4" />
+        <SheetContent
+          side="right"
+          className="flex h-[100dvh] max-h-[100dvh] w-[min(100vw-0.5rem,26rem)] flex-col gap-0 border-l border-slate-200/90 bg-slate-50/90 p-0 shadow-2xl sm:max-w-md"
+        >
+          <SheetHeader className="shrink-0 space-y-2 border-b border-slate-200/80 bg-white px-5 pb-4 pt-5 pr-14 text-left">
+            <SheetTitle className="flex items-center gap-3 text-lg font-semibold tracking-tight text-slate-900">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 shadow-sm ring-1 ring-blue-100/80">
+                <CalendarDays className="h-5 w-5" aria-hidden />
+              </span>
               Day-by-Day Planner
             </SheetTitle>
-            <SheetDescription>
-              Adjust planning constraints and generate an itinerary by opening hours
-              and nearest stops.
+            <SheetDescription className="text-left text-[13px] leading-relaxed text-slate-500">
+              Adjust planning constraints and generate an itinerary by opening hours and nearest
+              stops.
             </SheetDescription>
           </SheetHeader>
-          <div className="px-4 pb-4 space-y-3 overflow-y-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <p className="text-[11px] text-muted-foreground mb-1">Day start</p>
-                <Input
-                  type="time"
-                  className="h-8 text-xs"
-                  value={formatClock(dayStartMinutes)}
-                  onChange={(e) => {
-                    if (!canEditTrip) return;
-                    const next = parseClock(e.target.value);
-                    if (next === null) return;
-                    setDayStartMinutes(Math.min(next, dayEndMinutes - 30));
-                  }}
-                  disabled={!canEditTrip}
-                />
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+              <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      <Clock className="h-3 w-3 opacity-80" aria-hidden />
+                      Day start
+                    </p>
+                    <Input
+                      type="time"
+                      className="h-10 rounded-lg border-slate-200 bg-slate-50/80 text-sm font-medium shadow-sm focus-visible:bg-white"
+                      value={formatClock(dayStartMinutes)}
+                      onChange={(e) => {
+                        if (!canEditTrip) return;
+                        const next = parseClock(e.target.value);
+                        if (next === null) return;
+                        setDayStartMinutes(Math.min(next, dayEndMinutes - 30));
+                      }}
+                      disabled={!canEditTrip}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      <Clock className="h-3 w-3 opacity-80" aria-hidden />
+                      Day end
+                    </p>
+                    <Input
+                      type="time"
+                      className="h-10 rounded-lg border-slate-200 bg-slate-50/80 text-sm font-medium shadow-sm focus-visible:bg-white"
+                      value={formatClock(dayEndMinutes)}
+                      onChange={(e) => {
+                        if (!canEditTrip) return;
+                        const next = parseClock(e.target.value);
+                        if (next === null) return;
+                        setDayEndMinutes(Math.max(next, dayStartMinutes + 30));
+                      }}
+                      disabled={!canEditTrip}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Visit min / stop (minutes)
+                  </p>
+                  <Input
+                    type="number"
+                    min={5}
+                    step={5}
+                    className="h-10 rounded-lg border-slate-200 bg-slate-50/80 text-sm font-medium shadow-sm focus-visible:bg-white"
+                    value={defaultVisitMinutes}
+                    onChange={(e) =>
+                      canEditTrip &&
+                      setDefaultVisitMinutes(Math.max(5, Number(e.target.value) || 60))
+                    }
+                    disabled={!canEditTrip}
+                  />
+                </div>
               </div>
-              <div>
-                <p className="text-[11px] text-muted-foreground mb-1">Day end</p>
-                <Input
-                  type="time"
-                  className="h-8 text-xs"
-                  value={formatClock(dayEndMinutes)}
-                  onChange={(e) => {
-                    if (!canEditTrip) return;
-                    const next = parseClock(e.target.value);
-                    if (next === null) return;
-                    setDayEndMinutes(Math.max(next, dayStartMinutes + 30));
-                  }}
-                  disabled={!canEditTrip}
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm transition-colors hover:border-slate-300/90">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-slate-900"
+                  checked={autoSplitLongTransfers}
+                  onChange={(e) => setAutoSplitLongTransfers(e.target.checked)}
                 />
-              </div>
-              <div>
-                <p className="text-[11px] text-muted-foreground mb-1">Visit min/stop</p>
-                <Input
-                  type="number"
-                  min={5}
-                  step={5}
-                  className="h-8 text-xs"
-                  value={defaultVisitMinutes}
-                  onChange={(e) =>
-                    canEditTrip &&
-                    setDefaultVisitMinutes(Math.max(5, Number(e.target.value) || 60))
-                  }
-                  disabled={!canEditTrip}
-                />
-              </div>
-            </div>
-            <label className="flex items-start gap-2 rounded-md border bg-muted/30 px-2.5 py-2">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4"
-                checked={autoSplitLongTransfers}
-                onChange={(e) => setAutoSplitLongTransfers(e.target.checked)}
-              />
-              <span className="text-[11px] text-muted-foreground">
-                Auto-split long transfers with en-route waypoints when a leg cannot fit in one day.
-              </span>
-            </label>
-            <Button
-              onClick={handleOptimize}
-              disabled={optimizing || waypoints.length < 3 || !canEditTrip}
-              className="w-full gap-2"
-            >
-              {optimizing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Regenerate Day-by-Day Itinerary
-            </Button>
-            {showDayPlanner && optimizeDays.length > 0 ? (
-              <div className="space-y-2">
-                {optimizeDays.map((dayPlan) => (
-                  <div key={dayPlan.day} className="rounded-md border p-2 space-y-2">
-                    <button
-                      className="w-full flex items-center justify-between text-left"
-                      onClick={() =>
-                        setExpandedDay((prev) => (prev === dayPlan.day ? null : dayPlan.day))
-                      }
-                    >
-                      <div>
-                        <p className="text-sm font-medium">Day {dayPlan.day}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {dayPlan.waypointIds.length} stop
-                          {dayPlan.waypointIds.length !== 1 ? "s" : ""}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">
+                    Auto-split long transfers
+                  </span>
+                  <span className="mt-1 block text-[12px] leading-snug text-slate-500">
+                    Adds en-route waypoints when a leg cannot fit in one day.
+                  </span>
+                </span>
+              </label>
+
+              <Button
+                onClick={handleOptimize}
+                disabled={optimizing || waypoints.length < 3 || !canEditTrip}
+                className="h-11 w-full gap-2 rounded-xl border-0 bg-slate-900 text-sm font-semibold text-white shadow-md hover:bg-slate-800 disabled:opacity-50"
+              >
+                {optimizing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <RotateCcw className="h-4 w-4" aria-hidden />
+                )}
+                Regenerate Day-by-Day Itinerary
+              </Button>
+
+              {showDayPlanner && optimizeDays.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                    Itinerary
+                  </p>
+                  {optimizeDays.map((dayPlan) => {
+                    const isOpen = expandedDay === dayPlan.day;
+                    const nStops = dayPlan.waypointIds.length;
+                    return (
+                      <div
+                        key={dayPlan.day}
+                        className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm"
+                      >
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50/80"
+                          onClick={() =>
+                            setExpandedDay((prev) => (prev === dayPlan.day ? null : dayPlan.day))
+                          }
+                        >
+                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                            <span className="text-base font-semibold text-slate-900">
+                              Day {dayPlan.day}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="rounded-full border-blue-100/90 bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-800 shadow-none"
+                            >
+                              {nStops} stop{nStops !== 1 ? "s" : ""}
+                            </Badge>
+                          </div>
+                          <ChevronDown
+                            className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 ${
+                              isOpen ? "rotate-180" : ""
+                            }`}
+                            aria-hidden
+                          />
+                        </button>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <p className="text-xs text-muted-foreground cursor-help">
-                              {formatMinutes(getDayTotalMinutes(dayPlan))} ·{" "}
-                              {formatKm(dayPlan.estimatedTravelMeters)} total
-                            </p>
+                            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-100 px-4 py-2.5 text-xs font-medium text-slate-600">
+                              <span className="inline-flex items-center gap-1.5">
+                                <Clock className="h-3.5 w-3.5 text-blue-600" aria-hidden />
+                                {formatMinutes(getDayTotalMinutes(dayPlan))}
+                              </span>
+                              <span className="inline-flex items-center gap-1.5">
+                                <MapPin className="h-3.5 w-3.5 text-blue-600" aria-hidden />
+                                {formatKm(dayPlan.estimatedTravelMeters)} total
+                              </span>
+                            </div>
                           </TooltipTrigger>
-                          <TooltipContent side="top">
-                            Total time = travel + per-stop visit duration
+                          <TooltipContent side="top" className="max-w-[14rem]">
+                            Total time includes driving between stops and visit time at each stop.
                           </TooltipContent>
                         </Tooltip>
-                        {expandedDay === dayPlan.day ? (
-                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        )}
+                        {isOpen ? (
+                          <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+                            <p className="mb-3 px-1 text-[11px] text-slate-500">
+                              {formatMinutes(dayPlan.estimatedTravelMinutes)} travel +{" "}
+                              {formatMinutes(getDayVisitMinutes(dayPlan))} visit
+                            </p>
+                            <ul className="relative ml-2 space-y-0 border-l-2 border-blue-100 pl-4">
+                              {dayPlan.waypointIds.map((id, idx) => {
+                                const wp = waypoints.find((w) => w.id === id);
+                                if (!wp) return null;
+                                const last = idx === dayPlan.waypointIds.length - 1;
+                                return (
+                                  <li key={id} className="relative pb-4 last:pb-1">
+                                    <span
+                                      className="absolute -left-[21px] top-2 flex h-2.5 w-2.5 rounded-full border-2 border-white bg-blue-600 shadow-sm ring-2 ring-blue-100"
+                                      aria-hidden
+                                    />
+                                    {!last ? (
+                                      <span
+                                        className="absolute -left-[15px] top-5 h-[calc(100%-0.25rem)] w-0.5 bg-blue-100"
+                                        aria-hidden
+                                      />
+                                    ) : null}
+                                    <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-3 shadow-sm">
+                                      <div className="flex items-start gap-2">
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-sm font-medium leading-snug text-slate-900">
+                                            {placeNameForActivity(wp.name)}
+                                          </p>
+                                          {wp.isTransitSplit && (
+                                            <p className="mt-0.5 text-[10px] text-slate-500">
+                                              {(() => {
+                                                const match = wp.id.match(/-(\d+)$/);
+                                                return match
+                                                  ? `En-route stop ${match[1]}`
+                                                  : "En-route stop";
+                                              })()}
+                                            </p>
+                                          )}
+                                        </div>
+                                        {wp.isTransitSplit && (
+                                          <Badge
+                                            variant="outline"
+                                            className="shrink-0 border-slate-200 text-[10px]"
+                                          >
+                                            Transit
+                                          </Badge>
+                                        )}
+                                        <div className="flex shrink-0 items-center gap-0.5">
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 text-slate-500"
+                                            onClick={() =>
+                                              moveWaypointAcrossDays(dayPlan.day, id, "prev")
+                                            }
+                                            disabled={dayPlan.day === 1 || !canEditTrip}
+                                            title="Move to previous day"
+                                          >
+                                            <ChevronLeft className="h-3.5 w-3.5" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 text-slate-500"
+                                            onClick={() =>
+                                              moveWaypointWithinDay(dayPlan.day, id, "up")
+                                            }
+                                            disabled={idx === 0 || !canEditTrip}
+                                            title="Move up in day"
+                                          >
+                                            <ChevronUp className="h-3.5 w-3.5" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 text-slate-500"
+                                            onClick={() =>
+                                              moveWaypointWithinDay(dayPlan.day, id, "down")
+                                            }
+                                            disabled={
+                                              idx === dayPlan.waypointIds.length - 1 ||
+                                              !canEditTrip
+                                            }
+                                            title="Move down in day"
+                                          >
+                                            <ChevronDown className="h-3.5 w-3.5" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 text-slate-500"
+                                            onClick={() =>
+                                              moveWaypointAcrossDays(dayPlan.day, id, "next")
+                                            }
+                                            disabled={
+                                              dayPlan.day === optimizeDays.length || !canEditTrip
+                                            }
+                                            title="Move to next day"
+                                          >
+                                            <ChevronRight className="h-3.5 w-3.5" />
+                                          </Button>
+                                        </div>
+                                      </div>
+                                      <Input
+                                        value={wp.notes || ""}
+                                        placeholder={
+                                          wp.isTransitSplit
+                                            ? "Transit stop generated for long transfer"
+                                            : "Add note for this day plan stop..."
+                                        }
+                                        className="mt-2 h-8 border-slate-200/80 bg-white text-xs"
+                                        onChange={(e) =>
+                                          updateWaypoint(id, { notes: e.target.value })
+                                        }
+                                        disabled={!canEditTrip || wp.isTransitSplit}
+                                      />
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
-                    </button>
-                    {expandedDay === dayPlan.day ? (
-                      <div className="space-y-1.5">
-                        <p className="text-[11px] text-muted-foreground">
-                          {formatMinutes(dayPlan.estimatedTravelMinutes)} travel +{" "}
-                          {formatMinutes(getDayVisitMinutes(dayPlan))} visit ·{" "}
-                          {formatKm(dayPlan.estimatedTravelMeters)}
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-8 text-center">
+                  <p className="text-sm font-medium text-slate-700">No itinerary yet</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                    Set your day window above, then tap Regenerate to build your day-by-day plan.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+      <Sheet open={collaborationPanelOpen} onOpenChange={setCollaborationPanelOpen}>
+        <SheetContent
+          side="right"
+          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
+        >
+          <SheetHeader className="shrink-0 space-y-1.5 border-b border-slate-200/80 bg-white px-4 py-4 pr-14 text-left">
+            <SheetTitle className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-slate-900">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+                <MessageCircle className="h-4 w-4 shrink-0" aria-hidden />
+              </span>
+              Trip collaboration
+            </SheetTitle>
+            <SheetDescription className="text-left text-[13px] leading-relaxed text-slate-500">
+              Chat, invite members, and review activity—Pro and Team plans.
+            </SheetDescription>
+          </SheetHeader>
+          <Tabs
+            value={collaborationTab}
+            onValueChange={(v) => setCollaborationTab(v as CollaborationTab)}
+            className="flex min-h-0 flex-1 flex-col gap-0"
+          >
+            <TabsList
+              variant="line"
+              className="mx-4 mt-2 h-11 w-[calc(100%-2rem)] shrink-0 justify-stretch rounded-none border-b border-slate-200/80 bg-transparent px-0.5 pb-0 pt-0"
+            >
+              <TabsTrigger
+                value="chat"
+                className="flex-1 gap-1.5 rounded-none text-xs font-medium sm:text-sm"
+              >
+                <MessageCircle className="h-3.5 w-3.5 opacity-70" aria-hidden />
+                Chat
+              </TabsTrigger>
+              <TabsTrigger
+                value="members"
+                className="flex-1 gap-1.5 rounded-none text-xs font-medium sm:text-sm"
+              >
+                <Users className="h-3.5 w-3.5 opacity-70" aria-hidden />
+                Members
+              </TabsTrigger>
+              <TabsTrigger
+                value="activity"
+                className="flex-1 gap-1.5 rounded-none text-xs font-medium sm:text-sm"
+              >
+                <History className="h-3.5 w-3.5 opacity-70" aria-hidden />
+                Activity
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent
+              value="chat"
+              className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 data-[state=inactive]:hidden"
+            >
+              {!collaborationEnabled ? (
+                <p className="text-xs text-muted-foreground">
+                  Collaboration is available on Pro and Team plans.
+                </p>
+              ) : effectiveTripId ? (
+                <TripMemberChat tripId={effectiveTripId} />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Save the itinerary first to use trip chat.
+                </p>
+              )}
+            </TabsContent>
+            <TabsContent
+              value="members"
+              className="mt-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 data-[state=inactive]:hidden"
+            >
+              {!collaborationEnabled ? (
+                <p className="text-xs text-muted-foreground">
+                  Collaboration is available on Pro and Team plans.
+                </p>
+              ) : effectiveTripId ? (
+                <TripMembersPanel tripId={effectiveTripId} canManage={canManageTrip} />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Save the itinerary first to invite collaborators.
+                </p>
+              )}
+            </TabsContent>
+            <TabsContent
+              value="activity"
+              className="mt-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 data-[state=inactive]:hidden"
+            >
+              {!timelineEnabled ? (
+                <p className="text-xs text-muted-foreground">
+                  Activity timeline is available on Pro and Team plans.
+                </p>
+              ) : activityLoading ? (
+                <p className="text-xs text-muted-foreground">Loading activity...</p>
+              ) : activityEvents.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No activity yet. Changes will appear here in real time.
+                </p>
+              ) : (
+                <div className="space-y-2 pr-1">
+                  {activityEvents.map((evt) => {
+                    const detailLines = getEventActivityLines(evt);
+                    const split = splitActivityDetailLines(detailLines);
+                    const { primary, reorder } = split;
+                    const headlineOnlyTripUpdate =
+                      evt.type === "trip.updated" &&
+                      primary.length === 1 &&
+                      reorder.length === 0 &&
+                      detailLines.length === 1;
+                    const showReorderCollapsible = reorder.length > 0;
+                    const headlineRepeatsOnlyPrimary =
+                      evt.type === "trip.updated" &&
+                      primary.length === 1 &&
+                      reorder.length > 0;
+                    return (
+                      <div key={evt.id} className="rounded-md border bg-muted/20 p-2.5">
+                        <p className="text-xs font-medium text-foreground">
+                          {formatEventHeadline(evt, detailLines, split)}
                         </p>
-                        {dayPlan.waypointIds.map((id, idx) => {
-                          const wp = waypoints.find((w) => w.id === id);
-                          if (!wp) return null;
-                          return (
-                            <div
-                              key={id}
-                              className="rounded border bg-muted/30 px-2 py-1.5 space-y-1.5"
-                            >
-                              <div className="flex items-start gap-2">
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-xs break-words leading-snug">
-                                    {wp.name}
-                                  </p>
-                                  {wp.isTransitSplit && (
-                                    <p className="text-[10px] text-muted-foreground">
-                                      {(() => {
-                                        const match = wp.id.match(/-(\d+)$/);
-                                        return match
-                                          ? `En-route stop ${match[1]}`
-                                          : "En-route stop";
-                                      })()}
-                                    </p>
-                                  )}
-                                </div>
-                                {wp.isTransitSplit && (
-                                  <Badge variant="outline" className="text-[10px]">
-                                    Transit
-                                  </Badge>
-                                )}
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 sm:h-6 sm:w-6"
-                                    onClick={() =>
-                                      moveWaypointAcrossDays(dayPlan.day, id, "prev")
-                                    }
-                                    disabled={dayPlan.day === 1 || !canEditTrip}
-                                    title="Move to previous day"
-                                  >
-                                    <ChevronLeft className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 sm:h-6 sm:w-6"
-                                    onClick={() =>
-                                      moveWaypointWithinDay(dayPlan.day, id, "up")
-                                    }
-                                    disabled={idx === 0 || !canEditTrip}
-                                    title="Move up in day"
-                                  >
-                                    <ChevronUp className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 sm:h-6 sm:w-6"
-                                    onClick={() =>
-                                      moveWaypointWithinDay(dayPlan.day, id, "down")
-                                    }
-                                    disabled={
-                                      idx === dayPlan.waypointIds.length - 1 || !canEditTrip
-                                    }
-                                    title="Move down in day"
-                                  >
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 sm:h-6 sm:w-6"
-                                    onClick={() =>
-                                      moveWaypointAcrossDays(dayPlan.day, id, "next")
-                                    }
-                                    disabled={
-                                      dayPlan.day === optimizeDays.length || !canEditTrip
-                                    }
-                                    title="Move to next day"
-                                  >
-                                    <ChevronRight className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                              </div>
-                              <Input
-                                value={wp.notes || ""}
-                                placeholder={
-                                  wp.isTransitSplit
-                                    ? "Transit stop generated for long transfer"
-                                    : "Add note for this day plan stop..."
-                                }
-                                className="h-7 text-xs"
-                                onChange={(e) =>
-                                  updateWaypoint(id, { notes: e.target.value })
-                                }
-                                disabled={!canEditTrip || wp.isTransitSplit}
-                              />
-                            </div>
-                          );
-                        })}
+                        {detailLines.length > 0 && !headlineOnlyTripUpdate ? (
+                          <div className="mt-2 space-y-2">
+                            {primary.length > 0 && !headlineRepeatsOnlyPrimary ? (
+                              <ul className="list-inside list-disc space-y-1 text-[11px] leading-snug text-muted-foreground">
+                                {primary.map((line, idx) => (
+                                  <li key={`p-${idx}`}>{line}</li>
+                                ))}
+                              </ul>
+                            ) : null}
+                            {showReorderCollapsible ? (
+                              <details className="rounded-md border border-border/50 bg-background/60 px-2 py-1.5">
+                                <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium text-foreground marker:hidden [&::-webkit-details-marker]:hidden">
+                                  <ChevronDown
+                                    aria-hidden
+                                    className="size-3.5 shrink-0 text-muted-foreground"
+                                  />
+                                  Re-ordered stops ({reorder.length})
+                                </summary>
+                                <ul className="mt-2 list-inside list-disc space-y-1 border-t border-border/40 pt-2 text-[11px] leading-snug text-muted-foreground">
+                                  {reorder.map((line, idx) => (
+                                    <li key={`r-${idx}`}>{line}</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          {formatEventTime(evt.createdAt)}
+                        </p>
                       </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground line-clamp-2">
-                        {getDayRouteLabel(dayPlan)}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No itinerary generated yet. Regenerate to create one.
-              </p>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
-      <Sheet open={membersSheetOpen} onOpenChange={setMembersSheetOpen}>
-        <SheetContent
-          side="right"
-          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
-        >
-          <SheetHeader className="shrink-0 space-y-1 border-b px-4 py-3 pr-12 text-left">
-            <SheetTitle className="flex items-center gap-2 text-base leading-snug">
-              <Users className="h-4 w-4 shrink-0" />
-              Trip Members
-            </SheetTitle>
-            <SheetDescription className="text-left text-xs sm:text-sm">
-              Invite editors and viewers to this itinerary—Pro and Team plans.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-            {!collaborationEnabled ? (
-              <p className="text-xs text-muted-foreground">
-                Collaboration is available on Pro and Team plans.
-              </p>
-            ) : effectiveTripId ? (
-              <TripMembersPanel tripId={effectiveTripId} canManage={canManageTrip} />
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Save the itinerary first to invite collaborators.
-              </p>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
-      <Sheet open={chatSheetOpen} onOpenChange={setChatSheetOpen}>
-        <SheetContent
-          side="right"
-          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
-        >
-          <SheetHeader className="shrink-0 space-y-1 border-b px-4 py-3 pr-12 text-left">
-            <SheetTitle className="flex items-center gap-2 text-base leading-snug">
-              <MessageCircle className="h-4 w-4 shrink-0" />
-              Trip chat
-            </SheetTitle>
-            <SheetDescription className="text-left text-xs sm:text-sm">
-              Message the group and share photos—Pro and Team plans.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-            {!collaborationEnabled ? (
-              <p className="text-xs text-muted-foreground">
-                Collaboration is available on Pro and Team plans.
-              </p>
-            ) : effectiveTripId ? (
-              <TripMemberChat tripId={effectiveTripId} />
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Save the itinerary first to use trip chat.
-              </p>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
-      <Sheet open={activityOpen} onOpenChange={setActivityOpen}>
-        <SheetContent
-          side="right"
-          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
-        >
-          <SheetHeader className="shrink-0 space-y-1 border-b px-4 py-3 pr-12 text-left">
-            <SheetTitle className="flex items-center gap-2 text-base leading-snug">
-              <History className="h-4 w-4 shrink-0" />
-              Activity Timeline
-            </SheetTitle>
-            <SheetDescription className="text-left text-xs sm:text-sm">
-              Recent collaboration updates with clear attribution.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-            {!timelineEnabled ? (
-              <p className="text-xs text-muted-foreground">
-                Activity timeline is available on Pro and Team plans.
-              </p>
-            ) : activityLoading ? (
-              <p className="text-xs text-muted-foreground">Loading activity...</p>
-            ) : activityEvents.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No activity yet. Changes will appear here in real time.
-              </p>
-            ) : (
-              <div className="space-y-2 pr-1">
-                {activityEvents.map((evt) => (
-                  <div key={evt.id} className="rounded-md border p-2">
-                    <p className="text-xs text-foreground">{formatEventMessage(evt)}</p>
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      {formatEventTime(evt.createdAt)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </SheetContent>
       </Sheet>
     </div>
-    <Dialog open={saveNameDialogOpen} onOpenChange={setSaveNameDialogOpen}>
-      <DialogContent showCloseButton>
-        <DialogHeader>
-          <DialogTitle>Name your itinerary</DialogTitle>
-          <DialogDescription>
-            You haven&apos;t set a title yet. It will be saved with the name below—change it if you like.
-          </DialogDescription>
-        </DialogHeader>
-        <Input
-          value={saveNameInput}
-          onChange={(e) => setSaveNameInput(e.target.value)}
-          placeholder={DEFAULT_SAVE_NAME}
-          className="h-9"
-          autoFocus
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void confirmSaveWithChosenName();
-            }
-          }}
-        />
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setSaveNameDialogOpen(false)}
-            disabled={saving}
-          >
-            Cancel
-          </Button>
-          <Button type="button" onClick={() => void confirmSaveWithChosenName()} disabled={saving}>
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-                Saving…
-              </>
-            ) : (
-              "Save itinerary"
-            )}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
     <Dialog open={discardDraftDialogOpen} onOpenChange={setDiscardDraftDialogOpen}>
       <DialogContent showCloseButton>
         <DialogHeader>

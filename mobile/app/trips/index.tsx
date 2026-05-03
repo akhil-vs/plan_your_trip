@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   ImageBackground,
@@ -52,6 +53,12 @@ const ITINERARY_CARD_IMAGES = [
 ];
 const DISCOVERY_DEFAULT_CATEGORY = "waterfalls";
 const DISCOVERY_DEFAULT_REGION = "england";
+
+function getHrefFromNotificationData(data: unknown): string | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const href = (data as Record<string, unknown>).href;
+  return typeof href === "string" && href.startsWith("/") ? href : null;
+}
 
 function TripCard({
   item,
@@ -145,6 +152,17 @@ export default function TripsScreen() {
     queryFn: () => api.staycations({ region: selectedRegion }),
   });
 
+  const [notifVisible, setNotifVisible] = useState(false);
+  const {
+    data: notifPayload,
+    refetch: refetchNotifications,
+    isFetching: notifsFetching,
+  } = useQuery({
+    queryKey: ["notifications"],
+    queryFn: () => api.notifications(30),
+    refetchInterval: 45_000,
+  });
+
   const openNewItineraryModal = () => {
     setNewName("");
     setStarterId("blank");
@@ -180,8 +198,22 @@ export default function TripsScreen() {
           <Text style={[type.title, styles.brandTitle]}>Viazo</Text>
         </View>
         <View style={styles.topActions}>
-          <Pressable style={styles.iconBtn} accessibilityLabel="Notifications">
-            <Ionicons name="notifications-outline" size={20} color={colors.textSecondary} />
+          <Pressable
+            style={styles.iconBtn}
+            accessibilityLabel="Notifications"
+            onPress={() => {
+              setNotifVisible(true);
+              void refetchNotifications();
+            }}
+          >
+            <Ionicons name="notifications-outline" size={22} color={colors.textSecondary} />
+            {(notifPayload?.unreadCount ?? 0) > 0 ? (
+              <View style={styles.notifBadge} accessibilityElementsHidden>
+                <Text style={styles.notifBadgeText}>
+                  {(notifPayload?.unreadCount ?? 0) > 99 ? "99+" : String(notifPayload?.unreadCount ?? 0)}
+                </Text>
+              </View>
+            ) : null}
           </Pressable>
           <Pressable
             style={styles.iconBtn}
@@ -439,6 +471,69 @@ export default function TripsScreen() {
         </Pressable>
       </Modal>
 
+      <Modal transparent visible={notifVisible} animationType="slide" onRequestClose={() => setNotifVisible(false)}>
+        <View style={styles.notifBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setNotifVisible(false)} accessibilityLabel="Close notifications" />
+          <View style={styles.notifSheet}>
+            <View style={styles.notifSheetHeader}>
+              <Text style={styles.notifSheetTitle}>Notifications</Text>
+              <View style={styles.notifHeaderActions}>
+                {(notifPayload?.unreadCount ?? 0) > 0 ? (
+                  <Pressable
+                    onPress={async () => {
+                      try {
+                        await api.notificationsMarkAllRead();
+                        await queryClient.invalidateQueries({ queryKey: ["notifications"] });
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  >
+                    <Text style={styles.sectionLink}>Mark all read</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable onPress={() => setNotifVisible(false)} accessibilityLabel="Close">
+                  <Ionicons name="close" size={24} color={colors.textSecondary} />
+                </Pressable>
+              </View>
+            </View>
+            {notifsFetching && !(notifPayload?.notifications?.length ?? 0) ? (
+              <ActivityIndicator size="large" color={colors.brandPrimary} style={{ marginVertical: 28 }} />
+            ) : (
+              <FlatList
+                data={notifPayload?.notifications ?? []}
+                keyExtractor={(i) => i.id}
+                style={{ maxHeight: Dimensions.get("window").height * 0.58 }}
+                contentContainerStyle={{ paddingBottom: 20 }}
+                renderItem={({ item }) => (
+                  <Pressable
+                    style={[styles.notifRow, item.readAt ? null : styles.notifRowUnread]}
+                    onPress={async () => {
+                      try {
+                        if (!item.readAt) await api.notificationMarkRead(item.id);
+                        await queryClient.invalidateQueries({ queryKey: ["notifications"] });
+                      } catch {
+                        // ignore
+                      }
+                      const href = getHrefFromNotificationData(item.data);
+                      setNotifVisible(false);
+                      if (href) router.push(href);
+                    }}
+                  >
+                    <Text style={styles.notifType}>{item.type.replace(/_/g, " ")}</Text>
+                    <Text style={styles.notifItemTitle}>{item.title}</Text>
+                    <Text style={styles.notifBody} numberOfLines={5}>
+                      {item.body}
+                    </Text>
+                  </Pressable>
+                )}
+                ListEmptyComponent={<Text style={styles.notifEmpty}>No notifications yet.</Text>}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {isLoading ? (
         <View style={styles.shell}>
           {header}
@@ -512,7 +607,55 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#eef2ff",
+    position: "relative",
+    overflow: "visible",
   },
+  notifBadge: {
+    position: "absolute",
+    top: -5,
+    right: -5,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  notifBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+  notifBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.45)",
+    justifyContent: "flex-end",
+  },
+  notifSheet: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.sm,
+    maxHeight: Dimensions.get("window").height * 0.78,
+  },
+  notifSheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: space.sm,
+  },
+  notifSheetTitle: { fontSize: 18, fontWeight: "700", color: colors.text },
+  notifHeaderActions: { flexDirection: "row", alignItems: "center", gap: 14 },
+  notifRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e2e8f0",
+  },
+  notifRowUnread: { backgroundColor: "#eff6ff" },
+  notifType: { fontSize: 11, fontWeight: "700", color: colors.textMuted, textTransform: "capitalize", marginBottom: 4 },
+  notifItemTitle: { fontSize: 15, fontWeight: "600", color: colors.text, marginBottom: 4 },
+  notifBody: { ...type.caption, color: colors.textSecondary, lineHeight: 18 },
+  notifEmpty: { ...type.body, color: colors.textMuted, textAlign: "center", paddingVertical: 28 },
   spinner: { marginTop: space.xl },
   loading: { ...type.body, color: colors.textMuted, textAlign: "center", marginTop: space.md },
   bottomMenu: {

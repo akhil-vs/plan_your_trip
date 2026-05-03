@@ -2,6 +2,8 @@ import { create } from "zustand";
 
 export type MapStyle = "streets" | "satellite" | "outdoors";
 
+export type CollaborationTab = "chat" | "members" | "activity";
+
 export interface ActiveWaypoint {
   id: string;
   name: string;
@@ -30,10 +32,9 @@ interface MapState {
   routeSummaryOpen: boolean;
   pickPointsMode: boolean;
   routeExploreOpen: boolean;
-  /** Trip members sheet (from map or sidebar): list + invites only. */
-  membersSheetOpen: boolean;
-  /** Trip chat sheet (from map): messages + photos only. */
-  chatSheetOpen: boolean;
+  /** Trip chat, members, and activity — one right sheet from map or sidebar. */
+  collaborationPanelOpen: boolean;
+  collaborationTab: CollaborationTab;
 
   setViewState: (vs: Partial<MapState["viewState"]>) => void;
   setMapStyle: (style: MapStyle) => void;
@@ -41,15 +42,15 @@ interface MapState {
   setDayStartMinutes: (minutes: number) => void;
   setDayEndMinutes: (minutes: number) => void;
   setDefaultVisitMinutes: (minutes: number) => void;
-  setSearchRadius: (radius: number) => void;
   setRouteCorridorMeters: (meters: number) => void;
   setSidebarOpen: (open: boolean) => void;
   setActiveWaypoint: (wp: ActiveWaypoint | null) => void;
   setRouteSummaryOpen: (open: boolean) => void;
   setPickPointsMode: (open: boolean) => void;
   setRouteExploreOpen: (open: boolean) => void;
-  setMembersSheetOpen: (open: boolean) => void;
-  setChatSheetOpen: (open: boolean) => void;
+  openCollaborationPanel: (tab: CollaborationTab) => void;
+  setCollaborationPanelOpen: (open: boolean) => void;
+  setCollaborationTab: (tab: CollaborationTab) => void;
 }
 
 const MAP_STYLES: Record<MapStyle, string> = {
@@ -80,8 +81,8 @@ export const useMapStore = create<MapState>((set) => ({
   routeSummaryOpen: false,
   pickPointsMode: false,
   routeExploreOpen: false,
-  membersSheetOpen: false,
-  chatSheetOpen: false,
+  collaborationPanelOpen: false,
+  collaborationTab: "chat",
 
   setViewState: (vs) =>
     set((s) => ({ viewState: { ...s.viewState, ...vs } })),
@@ -91,7 +92,6 @@ export const useMapStore = create<MapState>((set) => ({
   setDayStartMinutes: (dayStartMinutes) => set({ dayStartMinutes }),
   setDayEndMinutes: (dayEndMinutes) => set({ dayEndMinutes }),
   setDefaultVisitMinutes: (defaultVisitMinutes) => set({ defaultVisitMinutes }),
-  setSearchRadius: (searchRadius) => set({ searchRadius }),
   setRouteCorridorMeters: (routeCorridorMeters) => set({ routeCorridorMeters }),
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setActiveWaypoint: (activeWaypoint) =>
@@ -122,14 +122,9 @@ export const useMapStore = create<MapState>((set) => ({
       activeWaypoint: routeExploreOpen ? null : s.activeWaypoint,
       routeSummaryOpen: routeExploreOpen ? false : s.routeSummaryOpen,
     })),
-  setMembersSheetOpen: (open) =>
-    set({
-      membersSheetOpen: open,
-      ...(open ? { chatSheetOpen: false } : {}),
-    }),
-  setChatSheetOpen: (open) =>
-    set({
-      chatSheetOpen: open,
-      ...(open ? { membersSheetOpen: false } : {}),
-    }),
+  openCollaborationPanel: (tab) =>
+    set({ collaborationPanelOpen: true, collaborationTab: tab }),
+  setCollaborationPanelOpen: (collaborationPanelOpen) =>
+    set({ collaborationPanelOpen }),
+  setCollaborationTab: (collaborationTab) => set({ collaborationTab }),
 }));

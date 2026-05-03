@@ -3,6 +3,7 @@ import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
+import { createInAppNotification } from "@/lib/inAppNotifications";
 import { canUseCollaboration } from "@/lib/subscription";
 
 export async function GET(
@@ -131,5 +132,23 @@ export async function DELETE(
     authUser.id,
     authUser.name ?? null
   );
+
+  try {
+    const tripRow = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { name: true },
+    });
+    const tn = tripRow?.name?.trim() || "an itinerary";
+    await createInAppNotification({
+      userId,
+      type: "TRIP_UPDATED",
+      title: "Removed from itinerary",
+      body: `You no longer have access to “${tn}”.`,
+      data: { href: "/dashboard" },
+    });
+  } catch {
+    // best-effort
+  }
+
   return NextResponse.json({ success: true });
 }

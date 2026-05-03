@@ -31,6 +31,13 @@ enum SubscriptionPlan {
   TEAM
 }
 
+enum InAppNotificationType {
+  TRIP_INVITE_RECEIVED
+  TRIP_INVITE_ACCEPTED
+  TRIP_UPDATED
+  SYSTEM
+}
+
 model User {
   id            String       @id @default(cuid())
   name          String
@@ -45,7 +52,23 @@ model User {
   sentInvites   TripInvite[] @relation("TripInviteSender")
   templates     TripTemplate[]
   tripChatMessages TripChatMessage[]
+  notifications InAppNotification[]
   createdAt     DateTime     @default(now())
+}
+
+model InAppNotification {
+  id        String                 @id @default(cuid())
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  type      InAppNotificationType
+  title     String
+  body      String                 @db.Text
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime               @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
 }
 
 model Trip {

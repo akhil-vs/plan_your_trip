@@ -37,10 +37,6 @@ export default function LandingScreen() {
             <Text style={styles.brandSuffix}>.cc</Text>
           </View>
           <View style={styles.headerRight}>
-            <Pressable style={styles.iconBtn}>
-              <Ionicons name="notifications-outline" size={18} color="#1f2937" />
-              <View style={styles.notificationDot} />
-            </Pressable>
             <Pressable style={styles.profileBtn}>
               <Image source={{ uri: PROFILE_IMAGE }} style={styles.avatar} />
               <View style={styles.profileDot} />
@@ -129,26 +125,6 @@ const styles = StyleSheet.create({
   brand: { fontSize: 30, fontWeight: "800", color: "#0f172a", letterSpacing: -0.8, lineHeight: 30 },
   brandSuffix: { fontSize: 17, fontWeight: "700", color: "#64748b", marginBottom: 2 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#ffffff",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  notificationDot: {
-    position: "absolute",
-    right: 9,
-    top: 9,
-    width: 6,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: "#3b82f6",
-  },
   profileBtn: { position: "relative" },
   avatar: { width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: "#dbe1ea" },
   profileDot: {

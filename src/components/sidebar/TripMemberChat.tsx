@@ -1,17 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "@/lib/toast";
-import { ImagePlus, Loader2, Send } from "lucide-react";
+import {
+  AtSign,
+  Download,
+  FolderOpen,
+  HelpCircle,
+  ImageIcon,
+  Link2,
+  Loader2,
+  Plus,
+  Send,
+} from "lucide-react";
 
 export interface ChatMessage {
   id: string;
@@ -23,6 +31,20 @@ export interface ChatMessage {
 
 interface TripMemberChatProps {
   tripId: string;
+}
+
+function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
+}
+
+function formatChatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 async function fileToCompressedDataUrl(file: File, maxWidth = 1400, quality = 0.82): Promise<string> {
@@ -59,17 +81,23 @@ async function fileToCompressedDataUrl(file: File, maxWidth = 1400, quality = 0.
   });
 }
 
+function isLikelyImageUrl(s: string): boolean {
+  const t = s.trim();
+  return /^https:\/\//i.test(t) && /\.(png|jpe?g|gif|webp)(\?|$)/i.test(t);
+}
+
 export function TripMemberChat({ tripId }: TripMemberChatProps) {
-  const { data: session } = useSession();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [chatLocked, setChatLocked] = useState(false);
   const [sending, setSending] = useState(false);
   const [text, setText] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [showLinkField, setShowLinkField] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photosStripRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/trips/${tripId}/chat`);
@@ -125,10 +153,31 @@ export function TripMemberChat({ tripId }: TripMemberChatProps) {
         return;
       }
       setText("");
+      setLinkUrl("");
+      setShowLinkField(false);
       await load();
     } finally {
       setSending(false);
     }
+  };
+
+  const submitComposer = async () => {
+    const raw = text.trim();
+    const url = linkUrl.trim();
+    if (url && !/^https:\/\//i.test(url)) {
+      toast.error("Image links must start with https://");
+      return;
+    }
+    if (url) {
+      await send(raw, url || undefined);
+      return;
+    }
+    if (raw && !url && isLikelyImageUrl(raw)) {
+      await send("", raw);
+      setText("");
+      return;
+    }
+    await send(raw);
   };
 
   const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,8 +200,8 @@ export function TripMemberChat({ tripId }: TripMemberChatProps) {
 
   if (loading && messages.length === 0 && !chatLocked) {
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-sm text-slate-500">
+        <Loader2 className="h-5 w-5 animate-spin text-slate-400" aria-hidden />
         Loading chat…
       </div>
     );
@@ -160,153 +209,233 @@ export function TripMemberChat({ tripId }: TripMemberChatProps) {
 
   if (chatLocked) {
     return (
-      <p className="text-[11px] text-muted-foreground leading-snug">
+      <p className="text-[13px] leading-relaxed text-slate-500">
         Upgrade to Pro to use trip chat and shared photos with collaborators.
       </p>
     );
   }
 
   return (
-    <div className="min-w-0 space-y-3">
-      <p className="text-[11px] text-muted-foreground leading-snug">
-        Messages and photos are visible to everyone on this itinerary. Images are stored with the trip.
-      </p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden pr-0.5">
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 py-12 text-center">
+            <p className="text-sm font-medium text-slate-700">No messages yet</p>
+            <p className="mt-1 max-w-[16rem] text-xs leading-relaxed text-slate-500">
+              Say hi or share a photo—everyone on this itinerary can see the thread.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4 pb-2">
+            {messages.map((m) => {
+              const displayName = m.user.name?.trim() || "Collaborator";
+              return (
+                <div key={m.id} className="flex gap-3">
+                  <Avatar size="sm" className="mt-0.5 h-8 w-8 ring-1 ring-slate-100">
+                    <AvatarFallback className="bg-slate-100 text-[11px] font-semibold text-slate-600">
+                      {initialsFromName(displayName)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0">
+                      <span className="text-sm font-semibold text-slate-900">{displayName}</span>
+                      <span className="text-xs text-slate-400">{formatChatTime(m.createdAt)}</span>
+                    </div>
+                    <div className="rounded-xl border border-slate-200/90 bg-white px-3 py-2.5 shadow-sm">
+                      {m.body ? (
+                        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-800">
+                          {m.body}
+                        </p>
+                      ) : null}
+                      {m.imageUrl ? (
+                        <div className={m.body ? "mt-2" : ""}>
+                          <button
+                            type="button"
+                            className="block w-full max-w-full overflow-hidden rounded-lg border border-slate-200/80 bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/40"
+                            onClick={() => setLightbox(m.imageUrl)}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={m.imageUrl}
+                              alt=""
+                              className="max-h-48 w-full object-cover sm:max-h-56"
+                            />
+                          </button>
+                          <div className="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">
+                            <span className="truncate font-medium text-slate-600">
+                              {m.imageUrl.startsWith("data:")
+                                ? "Shared photo"
+                                : "Image attachment"}
+                            </span>
+                            <a
+                              href={m.imageUrl}
+                              download="chat-image"
+                              className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Download className="h-3.5 w-3.5" aria-hidden />
+                              <span className="sr-only sm:not-sr-only sm:inline">Download</span>
+                            </a>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
 
-      {photoMessages.length > 0 && (
-        <div>
-          <p className="text-[10px] font-medium text-muted-foreground mb-1.5">Photos</p>
-          <div className="-mx-0.5 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-1 px-0.5 scrollbar-thin [scrollbar-width:thin]">
+      {photoMessages.length > 0 ? (
+        <div ref={photosStripRef} className="shrink-0 border-t border-slate-200/80 pt-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Photos
+          </p>
+          <div className="-mx-0.5 flex gap-2 overflow-x-auto overscroll-x-contain pb-1 scrollbar-thin [scrollbar-width:thin]">
             {photoMessages.map((m) => (
               <button
                 key={m.id}
                 type="button"
-                className="shrink-0 rounded-md border overflow-hidden bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="shrink-0 overflow-hidden rounded-lg border border-slate-200/90 bg-white shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50"
                 onClick={() => m.imageUrl && setLightbox(m.imageUrl)}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={m.imageUrl!}
-                  alt=""
-                  className="h-14 w-14 object-cover"
-                />
+                <img src={m.imageUrl!} alt="" className="h-14 w-14 object-cover" />
               </button>
             ))}
           </div>
         </div>
-      )}
+      ) : null}
 
-      <ScrollArea className="h-[min(15rem,38dvh)] max-h-[45dvh] rounded-md border bg-muted/20 sm:h-[min(17.5rem,42dvh)]">
-        <div className="p-2 space-y-2">
-          {messages.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground text-center py-4">
-              No messages yet. Say hi or share a photo from the road.
-            </p>
-          ) : (
-            messages.map((m) => {
-              const mine = m.user.id === session?.user?.id;
-              return (
-                <div
-                  key={m.id}
-                  className={`rounded-lg px-2 py-1.5 text-xs ${
-                    mine ? "ml-1 bg-blue-600/10 sm:ml-3" : "mr-1 border bg-background sm:mr-3"
-                  }`}
-                >
-                  <p className="font-medium text-[10px] text-muted-foreground mb-0.5">
-                    {m.user.name}
-                  </p>
-                  {m.body ? (
-                    <p className="text-foreground whitespace-pre-wrap break-words">{m.body}</p>
-                  ) : null}
-                  {m.imageUrl ? (
-                    <button
-                      type="button"
-                      className="mt-1 block rounded-md overflow-hidden border max-w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() => setLightbox(m.imageUrl)}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={m.imageUrl}
-                        alt=""
-                        className="max-h-40 w-auto max-w-full object-contain"
-                      />
-                    </button>
-                  ) : null}
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    {new Date(m.createdAt).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </div>
-              );
-            })
-          )}
-          <div ref={bottomRef} />
+      <div className="mt-3 shrink-0 border-t border-slate-200/80 pt-3">
+        <div className="mb-3 flex items-center gap-5 text-xs">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 font-medium text-slate-500 transition-colors hover:text-slate-800"
+            onClick={() =>
+              toast.message("For account and billing help, use your dashboard settings.")
+            }
+          >
+            <HelpCircle className="h-3.5 w-3.5" aria-hidden />
+            Support
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 font-medium text-slate-500 transition-colors hover:text-slate-800 disabled:opacity-40"
+            disabled={photoMessages.length === 0}
+            onClick={() =>
+              photosStripRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+            }
+          >
+            <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+            Files
+          </button>
         </div>
-      </ScrollArea>
 
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-1.5">
-          <Input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Message the group…"
-            className="h-9 min-w-0 flex-1 text-xs"
-            disabled={sending}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send(text);
-              }
-            }}
-          />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={onPickImage}
-          />
-          <div className="flex shrink-0 justify-end gap-1.5 sm:justify-start">
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-2.5 shadow-sm">
+          <div className="flex gap-2">
+            <div className="relative min-w-0 flex-1">
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Type a message or paste a URL…"
+                rows={3}
+                disabled={sending}
+                className="min-h-[4.5rem] w-full resize-none rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5 pr-12 text-sm text-slate-900 shadow-inner placeholder:text-slate-400 focus:border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:opacity-50"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void submitComposer();
+                  }
+                }}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onPickImage}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute bottom-2 right-2 h-8 w-8 rounded-full text-slate-500 hover:bg-white hover:text-slate-900"
+                disabled={sending}
+                title="Add photo"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+              </Button>
+            </div>
             <Button
               type="button"
-              variant="outline"
-              size="icon"
-              className="h-9 w-9 touch-manipulation"
-              disabled={sending}
-              title="Add photo"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImagePlus className="h-4 w-4" />
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              className="h-9 w-9 touch-manipulation"
+              className="h-[4.5rem] w-12 shrink-0 rounded-xl bg-slate-900 text-white shadow-md hover:bg-slate-800 disabled:opacity-40"
               disabled={sending || (!text.trim() && !linkUrl.trim())}
-              onClick={async () => {
-                const url = linkUrl.trim();
-                if (url && !/^https:\/\//i.test(url)) {
-                  toast.error("Image links must start with https://");
-                  return;
-                }
-                await send(text, url || undefined);
-                setLinkUrl("");
-              }}
+              onClick={() => void submitComposer()}
+              title="Send"
             >
-              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {sending ? (
+                <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+              ) : (
+                <Send className="h-5 w-5" aria-hidden />
+              )}
             </Button>
           </div>
+
+          {showLinkField ? (
+            <div className="mt-2 px-0.5">
+              <input
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="https://… image URL"
+                disabled={sending}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50/80 px-3 text-xs text-slate-800 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              />
+            </div>
+          ) : null}
+
+          <div className="mt-2 flex items-center justify-between gap-2 px-0.5">
+            <div className="flex items-center gap-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                disabled={sending}
+                title="Attach image"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImageIcon className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                disabled={sending}
+                title="Paste image URL"
+                onClick={() => setShowLinkField((v) => !v)}
+              >
+                <Link2 className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                title="Mentions"
+                onClick={() => toast.message("Mentions are not available yet.")}
+              >
+                <AtSign className="h-4 w-4" aria-hidden />
+              </Button>
+            </div>
+            <span className="text-[10px] text-slate-400">Markdown supported</span>
+          </div>
         </div>
-        <Input
-          value={linkUrl}
-          onChange={(e) => setLinkUrl(e.target.value)}
-          placeholder="Or paste an https:// image URL"
-          className="h-8 min-w-0 text-[11px]"
-          disabled={sending}
-        />
       </div>
 
       <Dialog open={!!lightbox} onOpenChange={(o) => !o && setLightbox(null)}>
@@ -314,7 +443,7 @@ export function TripMemberChat({ tripId }: TripMemberChatProps) {
           <DialogTitle className="sr-only">Photo</DialogTitle>
           {lightbox ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={lightbox} alt="" className="w-full h-auto rounded-md max-h-[80vh] object-contain" />
+            <img src={lightbox} alt="" className="max-h-[80vh] w-full rounded-md object-contain" />
           ) : null}
         </DialogContent>
       </Dialog>

@@ -23,6 +23,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Mapbox from "@rnmapbox/maps";
 import DraggableFlatList, { type RenderItemParams } from "react-native-draggable-flatlist";
+import { randomUUID } from "@/lib/randomUuid";
 import { buildTripUpdateBody } from "@/lib/trip-payload";
 import { api } from "@/services/api";
 import { getAccessToken } from "@/services/session";
@@ -158,11 +159,7 @@ export function TripPlannerScreen({ tripId }: Props) {
   const suggestionRequestIdRef = useRef(0);
   const suggestionAnchorRef = useRef<{ lng: number; lat: number } | null>(null);
   const suggestionAbortControllerRef = useRef<AbortController | null>(null);
-  const suggestionSessionTokenRef = useRef(
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
+  const suggestionSessionTokenRef = useRef(randomUUID());
   const searchInputRef = useRef<TextInput>(null);
 
   const runProgrammaticCameraMove = (fn: () => void, suppressMs = 1200) => {
@@ -263,10 +260,7 @@ export function TripPlannerScreen({ tripId }: Props) {
     setSearchSuggestions([]);
     setSuggesting(false);
     setBannerListMode("POIS");
-    suggestionSessionTokenRef.current =
-      typeof globalThis.crypto?.randomUUID === "function"
-        ? globalThis.crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    suggestionSessionTokenRef.current = randomUUID();
     Keyboard.dismiss();
   };
 

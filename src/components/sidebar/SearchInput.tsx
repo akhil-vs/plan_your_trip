@@ -123,47 +123,53 @@ export function SearchInput({ disabled = false }: { disabled?: boolean }) {
   };
 
   return (
-    <div ref={containerRef} className="relative z-20">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search destinations worldwide..."
-          value={query}
-          onChange={(e) => handleChange(e.target.value)}
-          onFocus={() => results.length > 0 && setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              if (results.length > 0) {
-                void handleSelect(results[0]);
-              } else if (query.trim().length >= 3) {
-                void doSearch(query);
+    <div
+      ref={containerRef}
+      className="relative z-20 rounded-2xl border border-slate-200/90 bg-white p-1 shadow-sm"
+    >
+      <div className="flex items-center gap-1">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            placeholder="Search destinations worldwide..."
+            value={query}
+            onChange={(e) => handleChange(e.target.value)}
+            onFocus={() => results.length > 0 && setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (results.length > 0) {
+                  void handleSelect(results[0]);
+                } else if (query.trim().length >= 3) {
+                  void doSearch(query);
+                }
               }
-            }
-          }}
-          className="pl-10 pr-10"
-          disabled={disabled}
-        />
-        {loading && (
-          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
-        )}
+            }}
+            className="h-9 border-0 bg-slate-50/80 pl-10 pr-10 shadow-none ring-offset-0 transition-colors placeholder:text-slate-400 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-blue-500/25"
+            disabled={disabled}
+          />
+          {loading && (
+            <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0 touch-manipulation rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+          onClick={handleUseCurrentLocation}
+          disabled={locating || disabled}
+          aria-label={locating ? "Getting location" : "Use current location"}
+          title="Use current location. If your first stop is already Current Location, the next one is added at the end of the route (return leg)."
+        >
+          {locating ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <LocateFixed className="h-4 w-4" aria-hidden />
+          )}
+        </Button>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="mt-2 w-full gap-2"
-        onClick={handleUseCurrentLocation}
-        disabled={locating || disabled}
-      >
-        {locating ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <LocateFixed className="h-4 w-4" />
-        )}
-        {locating ? "Getting location..." : "Use current location"}
-      </Button>
       {locationError && (
-        <p className="mt-1 text-xs text-red-500">{locationError}</p>
+        <p className="mt-1.5 text-xs text-red-500">{locationError}</p>
       )}
 
       {open && (

@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { TripCardHeaderImage } from "@/components/dashboard/TripCardHeaderImage";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { toast } from "@/lib/toast";
 import {
   MapPin,
@@ -287,6 +288,7 @@ export default function DashboardPage() {
                 <span className="hidden sm:inline">New itinerary</span>
               </Button>
             </Link>
+            <NotificationBell className="rounded-full border border-transparent hover:border-slate-200 hover:bg-slate-50" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="rounded-full">

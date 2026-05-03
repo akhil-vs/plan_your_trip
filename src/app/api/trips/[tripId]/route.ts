@@ -3,6 +3,12 @@ import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { canEditTrip, canManageTrip, canViewTrip, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
+import { notifyCollaboratorsOfTripSave } from "@/lib/inAppNotifications";
+import {
+  buildTripSaveActivityLines,
+  type WaypointInput,
+  type WaypointSnap,
+} from "@/lib/tripUpdateActivitySummary";
 
 export async function GET(
   req: NextRequest,
@@ -73,6 +79,48 @@ export async function PUT(
     );
   }
 
+  const prevWaypointRows = await prisma.waypoint.findMany({
+    where: { tripId },
+    orderBy: { order: "asc" },
+  });
+  const prevDayPlanCount = await prisma.tripDayPlan.count({ where: { tripId } });
+  const previousWaypoints: WaypointSnap[] = prevWaypointRows.map((w) => ({
+    id: w.id,
+    name: w.name,
+    order: w.order,
+    lat: w.lat,
+    lng: w.lng,
+    notes: w.notes,
+    visitMinutes: w.visitMinutes,
+    openMinutes: w.openMinutes,
+    closeMinutes: w.closeMinutes,
+    isLocked: w.isLocked,
+  }));
+
+  const incomingWaypoints: WaypointInput[] = Array.isArray(waypoints)
+    ? (waypoints as Record<string, unknown>[]).map((wp) => ({
+        id: typeof wp?.id === "string" ? wp.id.trim() : undefined,
+        name: typeof wp?.name === "string" ? wp.name : "Stop",
+        order: typeof wp?.order === "number" && Number.isFinite(wp.order) ? wp.order : 0,
+        lat: typeof wp?.lat === "number" && Number.isFinite(wp.lat) ? wp.lat : 0,
+        lng: typeof wp?.lng === "number" && Number.isFinite(wp.lng) ? wp.lng : 0,
+        notes: typeof wp?.notes === "string" ? wp.notes : null,
+        visitMinutes:
+          typeof wp?.visitMinutes === "number" && Number.isFinite(wp.visitMinutes)
+            ? wp.visitMinutes
+            : undefined,
+        openMinutes:
+          typeof wp?.openMinutes === "number" && Number.isFinite(wp.openMinutes)
+            ? wp.openMinutes
+            : undefined,
+        closeMinutes:
+          typeof wp?.closeMinutes === "number" && Number.isFinite(wp.closeMinutes)
+            ? wp.closeMinutes
+            : undefined,
+        isLocked: wp?.isLocked === true,
+      }))
+    : [];
+
   // Delete existing waypoints and recreate
   await prisma.waypoint.deleteMany({ where: { tripId } });
   await prisma.tripDayPlan.deleteMany({ where: { tripId } });
@@ -105,18 +153,15 @@ export async function PUT(
             ? Math.max(5, Math.round(optimizationSettings.defaultVisitMinutes))
             : existing.optimizerDefaultVisitMinutes,
         waypoints: {
-          create: (waypoints || []).map(
-            (wp: {
-              name: string;
-              notes?: string;
-              lat: number;
-              lng: number;
-              order: number;
-              isLocked?: boolean;
-              visitMinutes?: number;
-              openMinutes?: number;
-              closeMinutes?: number;
-            }) => ({
+          create: incomingWaypoints.map((wp) => {
+            const id =
+              typeof wp.id === "string" &&
+              wp.id.trim().length >= 3 &&
+              wp.id.trim().length <= 128
+                ? wp.id.trim()
+                : undefined;
+            return {
+              ...(id ? { id } : {}),
               name: wp.name,
               notes: typeof wp.notes === "string" ? wp.notes : null,
               lat: wp.lat,
@@ -135,8 +180,8 @@ export async function PUT(
                 typeof wp.closeMinutes === "number" && Number.isFinite(wp.closeMinutes)
                   ? Math.max(0, Math.min(23 * 60 + 59, Math.round(wp.closeMinutes)))
                   : 23 * 60 + 59,
-            })
-          ),
+            };
+          }),
         },
         dayPlans: {
           create: (dayPlans || []).map(
@@ -160,6 +205,16 @@ export async function PUT(
       },
     });
 
+    const activityLines = buildTripSaveActivityLines({
+      actorName: authUser.name ?? "Someone",
+      previousWaypoints,
+      incomingWaypoints,
+      previousTitle: existing.name || "",
+      newTitle: trip.name || "",
+      previousDayPlanCount: prevDayPlanCount,
+      newDayPlanCount: trip.dayPlans.length,
+    });
+
     await createTripEvent(
       tripId,
       "trip.updated",
@@ -167,10 +222,22 @@ export async function PUT(
         name: trip.name,
         waypointCount: trip.waypoints.length,
         dayCount: trip.dayPlans.length,
+        activityLines,
       },
       authUser.id,
       authUser.name ?? null
     );
+
+    try {
+      await notifyCollaboratorsOfTripSave({
+        tripId,
+        actorUserId: authUser.id,
+        tripName: trip.name || "",
+        activityLines,
+      });
+    } catch {
+      // In-app alerts are best-effort.
+    }
 
     return NextResponse.json(trip);
   } catch (error) {

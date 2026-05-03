@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
 import { createTripEvent } from "@/lib/tripEvents";
+import { buildTripCreatedActivityLines } from "@/lib/tripUpdateActivitySummary";
 
 export async function GET(request: NextRequest) {
   const authUser = await getApiUser(request);
@@ -85,38 +86,35 @@ export async function POST(req: NextRequest) {
         optimizerDayEndMinutes,
         optimizerDefaultVisitMinutes,
         waypoints: {
-          create: (waypoints || []).map(
-            (wp: {
-              name: string;
-              notes?: string;
-              lat: number;
-              lng: number;
-              order: number;
-              isLocked?: boolean;
-              visitMinutes?: number;
-              openMinutes?: number;
-              closeMinutes?: number;
-            }) => ({
-              name: wp.name,
-              notes: typeof wp.notes === "string" ? wp.notes : null,
-              lat: wp.lat,
-              lng: wp.lng,
-              order: wp.order,
-              isLocked: wp.isLocked === true,
+          create: (Array.isArray(waypoints) ? waypoints : []).map((wp: Record<string, unknown>) => {
+            const id =
+              typeof wp?.id === "string" &&
+              wp.id.trim().length >= 3 &&
+              wp.id.trim().length <= 128
+                ? wp.id.trim()
+                : undefined;
+            return {
+              ...(id ? { id } : {}),
+              name: typeof wp?.name === "string" ? wp.name : "Stop",
+              notes: typeof wp?.notes === "string" ? wp.notes : null,
+              lat: typeof wp?.lat === "number" && Number.isFinite(wp.lat) ? wp.lat : 0,
+              lng: typeof wp?.lng === "number" && Number.isFinite(wp.lng) ? wp.lng : 0,
+              order: typeof wp?.order === "number" && Number.isFinite(wp.order) ? wp.order : 0,
+              isLocked: wp?.isLocked === true,
               visitMinutes:
-                typeof wp.visitMinutes === "number" && Number.isFinite(wp.visitMinutes)
+                typeof wp?.visitMinutes === "number" && Number.isFinite(wp.visitMinutes)
                   ? Math.max(5, Math.round(wp.visitMinutes))
                   : 60,
               openMinutes:
-                typeof wp.openMinutes === "number" && Number.isFinite(wp.openMinutes)
+                typeof wp?.openMinutes === "number" && Number.isFinite(wp.openMinutes)
                   ? Math.max(0, Math.min(23 * 60 + 59, Math.round(wp.openMinutes)))
                   : 0,
               closeMinutes:
-                typeof wp.closeMinutes === "number" && Number.isFinite(wp.closeMinutes)
+                typeof wp?.closeMinutes === "number" && Number.isFinite(wp.closeMinutes)
                   ? Math.max(0, Math.min(23 * 60 + 59, Math.round(wp.closeMinutes)))
                   : 23 * 60 + 59,
-            })
-          ),
+            };
+          }),
         },
         dayPlans: {
           create: (dayPlans || []).map(
@@ -150,7 +148,15 @@ export async function POST(req: NextRequest) {
     await createTripEvent(
       trip.id,
       "trip.created",
-      { name: trip.name, waypointCount: trip.waypoints.length },
+      {
+        name: trip.name,
+        waypointCount: trip.waypoints.length,
+        activityLines: buildTripCreatedActivityLines(
+          authUser.name ?? "Someone",
+          trip.name,
+          trip.waypoints.map((w) => ({ name: w.name, order: w.order }))
+        ),
+      },
       authUser.id,
       authUser.name ?? null
     );

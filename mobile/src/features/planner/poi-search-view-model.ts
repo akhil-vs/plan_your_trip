@@ -1,14 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { randomUUID } from "@/lib/randomUuid";
 import { CHIP_DEFINITIONS, type ChipType, type POIFeature, type SearchMode } from "./poi-search-model";
 import { poiSearchRepository } from "./poi-search-repository";
 import { haversineMeters } from "./poi-search-route-utils";
 
 type LngLat = [number, number];
 
-const newSessionToken = () =>
-  typeof globalThis.crypto?.randomUUID === "function"
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const newSessionToken = () => randomUUID();
 
 export function usePOISearchViewModel() {
   const [activeChip, setActiveChip] = useState<ChipType | null>(null);
