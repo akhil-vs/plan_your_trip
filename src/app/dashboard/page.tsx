@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Logo } from "@/components/ui/Logo";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { TripCardHeaderImage } from "@/components/dashboard/TripCardHeaderImage";
 import { toast } from "@/lib/toast";
 import {
@@ -279,14 +279,7 @@ export default function DashboardPage() {
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-50" aria-label="Dashboard">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-14 py-2 sm:py-0 sm:h-16 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 sm:flex-nowrap">
-          <Link href="/" className="flex items-center min-w-0">
-            <span className="hidden min-[361px]:block">
-              <Logo size="md" />
-            </span>
-            <span className="min-[361px]:hidden">
-              <Logo size="sm" />
-            </span>
-          </Link>
+          <SiteLogoLink />
           <div className="flex items-center gap-2 sm:gap-3">
             <Link href="/planner">
               <Button size="sm" className="gap-1.5 min-h-9 min-w-9 sm:min-w-0">

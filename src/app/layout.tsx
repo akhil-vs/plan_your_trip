@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Plus_Jakarta_Sans, Inter, Geist_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans, Inter, Geist_Mono, Caveat } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { AdminAccessProvider } from "@/contexts/AdminAccessContext";
 import { Analytics } from "@vercel/analytics/next";
@@ -35,6 +35,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const caveat = Caveat({
+  variable: "--font-caveat",
+  subsets: ["latin"],
+  weight: ["600", "700"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Viazo — Travel route planner",
   description:
@@ -57,7 +64,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${inter.className} ${inter.variable} ${plusJakarta.variable} ${geistMono.variable} antialiased overflow-x-hidden`}
+        className={`${inter.className} ${inter.variable} ${plusJakarta.variable} ${geistMono.variable} ${caveat.variable} antialiased overflow-x-hidden`}
       >
         <a
           href="#main"

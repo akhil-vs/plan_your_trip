@@ -27,6 +27,18 @@ export default function RootLayout() {
             headerBackTitle: "Trips",
           }}
         />
+        <Stack.Screen
+          name="saved"
+          options={{
+            headerShown: true,
+            title: "Saved Gems",
+            headerStyle: { backgroundColor: colors.background },
+            headerShadowVisible: false,
+            headerTintColor: colors.brandPrimary,
+            headerTitleStyle: { fontWeight: "700", color: colors.text },
+            headerBackTitle: "Home",
+          }}
+        />
       </Stack>
     </AppProvider>
   );

@@ -75,7 +75,7 @@ export function StatCounter({
   return (
     <div
       ref={ref}
-      className={cn("text-center sm:text-left", className)}
+      className={cn("text-center", className)}
       aria-hidden={revealed ? undefined : true}
     >
       <p className="text-2xl sm:text-3xl font-bold text-gray-900 font-display tabular-nums tracking-tight">

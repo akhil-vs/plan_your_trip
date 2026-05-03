@@ -26,8 +26,12 @@ const NEARBY_CACHE_DISTANCE_METERS = 500;
 const CACHE_TTL_MS = 90_000;
 const SEARCH_IN_AREA_MAX_DISTANCE_METERS = 3000;
 const SEARCH_NEARBY_MAX_DISTANCE_METERS = 20_000;
+const RETRY_SUPPRESSION_MS = 12_000;
+const MAX_RETRY_ATTEMPTS = 2;
+const DETAILS_CACHE_TTL_MS = 60_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const suppressedRetryKeys = new Map<string, number>();
 const preferredLanguage = () => {
   try {
     const locale = Intl.DateTimeFormat().resolvedOptions().locale || "en";
@@ -184,12 +188,28 @@ const toSearchboxCategorySlug = (categoryId: string): string | null => {
   }
 };
 
-async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
+const shouldRetryStatus = (status: number) => status === 429 || (status >= 500 && status <= 599);
+
+async function fetchWithRetry(url: string, retryKey = url, retries = MAX_RETRY_ATTEMPTS): Promise<Response> {
+  const suppressedUntil = suppressedRetryKeys.get(retryKey);
+  if (suppressedUntil && suppressedUntil > Date.now()) {
+    return new Response(null, { status: 429, statusText: "retry_suppressed" });
+  }
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const response = await fetch(url);
-    if (response.status !== 429) return response;
-    if (attempt === retries) return response;
-    const backoff = 2000 * (attempt + 1);
+    try {
+      const response = await fetch(url);
+      if (!shouldRetryStatus(response.status)) return response;
+      if (attempt === retries) {
+        suppressedRetryKeys.set(retryKey, Date.now() + RETRY_SUPPRESSION_MS);
+        return response;
+      }
+    } catch (error) {
+      if (attempt === retries) {
+        suppressedRetryKeys.set(retryKey, Date.now() + RETRY_SUPPRESSION_MS);
+        throw error;
+      }
+    }
+    const backoff = 300 * 2 ** attempt + Math.floor(Math.random() * 120);
     await sleep(backoff);
   }
   return fetch(url);
@@ -292,6 +312,7 @@ type RouteCacheEntry = { signature: string; data: POIFeature[]; savedAt: number 
 export class POISearchRepository {
   private nearbyCache = new Map<string, NearbyCacheEntry>();
   private routeCache = new Map<string, RouteCacheEntry>();
+  private detailsCache = new Map<string, { savedAt: number; data: POIDetail }>();
 
   private isFresh(savedAt: number) {
     return Date.now() - savedAt <= CACHE_TTL_MS;
@@ -465,6 +486,11 @@ export class POISearchRepository {
   }
 
   async retrieveDetails(mapboxId: string, sessionToken: string): Promise<POIDetail> {
+    const cacheKey = `${mapboxId}|${sessionToken}`;
+    const cached = this.detailsCache.get(cacheKey);
+    if (cached && this.isFresh(cached.savedAt) && Date.now() - cached.savedAt <= DETAILS_CACHE_TTL_MS) {
+      return cached.data;
+    }
     const token = env.mapboxPublicToken;
     if (!token) return {};
     const params = new URLSearchParams({
@@ -472,7 +498,8 @@ export class POISearchRepository {
       session_token: sessionToken,
       language: preferredLanguage(),
     });
-    const res = await fetch(`${MAPBOX_SEARCH_BASE}/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`);
+    const retrieveUrl = `${MAPBOX_SEARCH_BASE}/retrieve/${encodeURIComponent(mapboxId)}?${params.toString()}`;
+    const res = await fetchWithRetry(retrieveUrl, `details:${cacheKey}`);
     if (!res.ok) throw new Error(`Mapbox retrieve failed (${res.status})`);
     const payload = await res.json().catch(() => ({ features: [] }));
     const feature = Array.isArray(payload?.features) ? payload.features[0] : null;
@@ -480,11 +507,13 @@ export class POISearchRepository {
     const hoursRaw = properties.opening_hours;
     const hoursRec = asRecord(hoursRaw);
     const hours = Array.isArray(hoursRec.weekday_text) ? (hoursRec.weekday_text as string[]) : [];
-    return {
+    const details = {
       phone: typeof properties.tel === "string" ? properties.tel : undefined,
       website: typeof properties.website === "string" ? properties.website : undefined,
       hours,
     };
+    this.detailsCache.set(cacheKey, { savedAt: Date.now(), data: details });
+    return details;
   }
 }
 

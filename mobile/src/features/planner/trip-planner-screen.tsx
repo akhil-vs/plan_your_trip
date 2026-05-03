@@ -1,5 +1,5 @@
 import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import {
   Keyboard,
   LayoutAnimation,
   Linking,
+  Modal,
   Platform,
   Pressable,
   Share,
@@ -27,6 +28,7 @@ import { api } from "@/services/api";
 import { getAccessToken } from "@/services/session";
 import type { LocationSearchResult, Trip, Waypoint } from "@/types/domain";
 import { env } from "@/config/env";
+import { trackEvent } from "@/lib/analytics";
 import { lngLatBoundsFromCoordinates } from "@/utils/map-bounds";
 import { mapStyles, mapUiTokens, type MapStyleId } from "./map-tokens";
 import { CHIP_DEFINITIONS, type ChipType } from "./poi-search-model";
@@ -108,6 +110,7 @@ const toLngLat = (location: unknown): [number, number] | null => {
 };
 
 export function TripPlannerScreen({ tripId }: Props) {
+  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const sheetRef = useRef<BottomSheet>(null);
   const cameraRef = useRef<React.ComponentRef<typeof Mapbox.Camera>>(null);
@@ -132,10 +135,20 @@ export function TripPlannerScreen({ tripId }: Props) {
   const [finalizeLoading, setFinalizeLoading] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [optimizeMenuOpen, setOptimizeMenuOpen] = useState(false);
+  const [optimizeConflicts, setOptimizeConflicts] = useState<{ waypointId?: string; message: string }[]>([]);
+  const [lastOptimizationSnapshot, setLastOptimizationSnapshot] = useState<{
+    waypoints: Waypoint[];
+    dayPlans: Trip["dayPlans"];
+  } | null>(null);
+  const [dayStartMinutesInput, setDayStartMinutesInput] = useState("540");
+  const [dayEndMinutesInput, setDayEndMinutesInput] = useState("1200");
+  const [defaultVisitMinutesInput, setDefaultVisitMinutesInput] = useState("60");
   const [bannerListMode, setBannerListMode] = useState<"SUGGESTIONS" | "POIS">("POIS");
   const [notice, setNotice] = useState<{ type: "success" | "info" | "error"; text: string } | null>(
     null
   );
+  const [removeStopConfirm, setRemoveStopConfirm] = useState<{ index: number; name: string } | null>(null);
   const poiVM = usePOISearchViewModel();
   const [poiDetailExpanded, setPoiDetailExpanded] = useState(false);
   const lastNearbyMapCenterRef = useRef<[number, number] | null>(null);
@@ -160,6 +173,7 @@ export function TripPlannerScreen({ tripId }: Props) {
   const { data: trip, refetch } = useQuery({
     queryKey: ["trip", tripId],
     queryFn: () => api.trip(tripId),
+    initialData: () => queryClient.getQueryData<Trip>(["trip", tripId]),
   });
 
   const waypoints = useMemo(() => trip?.waypoints ?? [], [trip?.waypoints]);
@@ -386,6 +400,15 @@ export function TripPlannerScreen({ tripId }: Props) {
       notify("error", "Unable to save itinerary changes.");
     }
   };
+  const confirmRemoveStop = async () => {
+    if (!removeStopConfirm) return;
+    const next = waypoints
+      .filter((_, i) => i !== removeStopConfirm.index)
+      .map((point, order) => ({ ...point, order }));
+    setRemoveStopConfirm(null);
+    await persistWaypoints(next);
+    notify("info", "Stop removed.");
+  };
 
   const dragListData = useMemo(
     () => waypoints.map((wp, idx) => ({ ...wp, __dragKey: String(wp.id ?? `${wp.name}-${idx}`) })),
@@ -399,6 +422,16 @@ export function TripPlannerScreen({ tripId }: Props) {
     setMenuOpen(false);
     setShareMenuOpen(false);
   }, [isTripFinalized]);
+  useEffect(() => {
+    setDayStartMinutesInput(String(trip?.optimizerDayStartMinutes ?? 9 * 60));
+    setDayEndMinutesInput(String(trip?.optimizerDayEndMinutes ?? 20 * 60));
+    setDefaultVisitMinutesInput(String(trip?.optimizerDefaultVisitMinutes ?? 60));
+  }, [
+    trip?.id,
+    trip?.optimizerDayStartMinutes,
+    trip?.optimizerDayEndMinutes,
+    trip?.optimizerDefaultVisitMinutes,
+  ]);
   const imperialDistance = useMemo(() => usesImperialDistance(), []);
   const readableDuration = useMemo(
     () => formatDurationReadable(routeSummary?.duration ?? 0),
@@ -1051,9 +1084,47 @@ export function TripPlannerScreen({ tripId }: Props) {
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
-                onPress={() => notify("info", "Saved places are coming soon.")}
+                onPress={() => {
+                  if (!selectedSearchLocation) return;
+                  void api
+                    .saveGem(selectedSearchLocation.id, {
+                      tripId,
+                      name: selectedSearchLocation.name,
+                      category: selectedSearchLocation.primaryType || "gem",
+                      lat: selectedSearchLocation.lat,
+                      lng: selectedSearchLocation.lng,
+                    })
+                    .then(() => {
+                      trackEvent("saved_gem.created", { tripId, gemId: selectedSearchLocation.id });
+                      notify("success", "Saved to your gems.");
+                    })
+                    .catch((error) => {
+                      notify("error", error instanceof Error ? error.message : "Unable to save gem.");
+                    });
+                }}
               >
                 <Text style={styles.addToRouteBtnText}>Save</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
+                onPress={() => {
+                  if (!selectedSearchLocation) return;
+                  void api
+                    .parkingNearby(selectedSearchLocation.lat, selectedSearchLocation.lng)
+                    .then((rows) => {
+                      trackEvent("parking.lookup", { count: rows.length });
+                      const top = rows[0];
+                      Alert.alert(
+                        "Nearby parking",
+                        top
+                          ? `${top.name}\nConfidence: ${top.confidenceScore}%`
+                          : "No parking insights available for this area."
+                      );
+                    })
+                    .catch(() => Alert.alert("Nearby parking", "Unable to fetch parking insights right now."));
+                }}
+              >
+                <Text style={styles.addToRouteBtnText}>Parking</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.addToRouteBtn, pressed && styles.addToRouteBtnPressed]}
@@ -1147,10 +1218,34 @@ export function TripPlannerScreen({ tripId }: Props) {
                   return;
                 }
                 try {
+                  const dayStartMinutes = Math.max(
+                    0,
+                    Math.min(23 * 60 + 59, Number.parseInt(dayStartMinutesInput, 10) || 9 * 60)
+                  );
+                  const dayEndMinutes = Math.max(
+                    dayStartMinutes + 30,
+                    Math.min(24 * 60, Number.parseInt(dayEndMinutesInput, 10) || 20 * 60)
+                  );
+                  const defaultVisitMinutes = Math.max(
+                    5,
+                    Number.parseInt(defaultVisitMinutesInput, 10) || 60
+                  );
+                  setLastOptimizationSnapshot({
+                    waypoints: waypoints.map((wp) => ({ ...wp })),
+                    dayPlans:
+                      trip.dayPlans?.map((dp) => ({
+                        ...dp,
+                        waypointIndexes: [...dp.waypointIndexes],
+                        waypointIds: [...(dp.waypointIds ?? [])],
+                      })) ?? [],
+                  });
                   const result = await api.optimize({
                     waypoints,
                     fixedStart: true,
                     fixedEnd: true,
+                    dayStartMinutes,
+                    dayEndMinutes,
+                    defaultVisitMinutes,
                     // Mobile UX: avoid synthetic transit-split pseudo stops.
                     autoSplitLongTransfers: false,
                   });
@@ -1172,7 +1267,20 @@ export function TripPlannerScreen({ tripId }: Props) {
                     waypointIds: [] as string[],
                     estimatedTravelMinutes: d.estimatedTravelMinutes,
                   }));
-                  await persistWaypoints(ordered, dayPlans);
+                  await api.updateTrip(
+                    tripId,
+                    buildTripUpdateBody(trip, {
+                      waypoints: ordered,
+                      dayPlans,
+                      optimizationSettings: {
+                        dayStartMinutes,
+                        dayEndMinutes,
+                        defaultVisitMinutes,
+                      },
+                    })
+                  );
+                  await refetch();
+                  setOptimizeConflicts(Array.isArray(result.conflicts) ? result.conflicts : []);
                   if (Array.isArray(result.conflicts) && result.conflicts.length > 0) {
                     const first = result.conflicts[0]?.message || "Some stops could not fully fit schedule constraints.";
                     notify("info", `Optimized with note: ${first}`);
@@ -1198,6 +1306,32 @@ export function TripPlannerScreen({ tripId }: Props) {
               style={styles.submenuItem}
               onPress={() => {
                 setMenuOpen(false);
+                setOptimizeMenuOpen(true);
+              }}
+            >
+              <Text style={styles.submenuText}>Optimize settings</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.submenuItem, !lastOptimizationSnapshot && styles.submenuItemDisabled]}
+              disabled={!lastOptimizationSnapshot}
+              onPress={async () => {
+                setMenuOpen(false);
+                if (!lastOptimizationSnapshot) return;
+                await persistWaypoints(
+                  lastOptimizationSnapshot.waypoints,
+                  lastOptimizationSnapshot.dayPlans
+                );
+                setLastOptimizationSnapshot(null);
+                setOptimizeConflicts([]);
+                notify("info", "Reverted last optimization.");
+              }}
+            >
+              <Text style={styles.submenuText}>Undo last optimize</Text>
+            </Pressable>
+            <Pressable
+              style={styles.submenuItem}
+              onPress={() => {
+                setMenuOpen(false);
                 const order: MapStyleId[] = ["light", "dark", "terrain"];
                 const next = order[(order.indexOf(styleId) + 1) % order.length];
                 setStyleId(next);
@@ -1205,6 +1339,16 @@ export function TripPlannerScreen({ tripId }: Props) {
             >
               <Text style={styles.submenuText}>Style: {styleId}</Text>
             </Pressable>
+          </View>
+        ) : null}
+        {optimizeConflicts.length > 0 ? (
+          <View style={styles.conflictsCard}>
+            <Text style={styles.conflictsTitle}>Optimization conflicts</Text>
+            {optimizeConflicts.map((conflict, idx) => (
+              <Text key={`${conflict.waypointId ?? "conflict"}-${idx}`} style={styles.conflictsItem}>
+                • {conflict.message}
+              </Text>
+            ))}
           </View>
         ) : null}
         {poiVM.state.activeChip && poiVM.state.isLoading ? <Text style={styles.searchHint}>Searching…</Text> : null}
@@ -1445,7 +1589,9 @@ export function TripPlannerScreen({ tripId }: Props) {
           </View>
           {isSheetExpanded ? (
             <>
-              <Text style={styles.dragHint}>Press and drag to reorder stops.</Text>
+              <Text style={styles.dragHint}>
+                {isTripFinalized ? "Trip is locked. Unlock to reorder stops." : "Press and drag to reorder stops."}
+              </Text>
               <DraggableFlatList
                 data={dragListData}
                 keyExtractor={(item) => item.__dragKey}
@@ -1453,6 +1599,7 @@ export function TripPlannerScreen({ tripId }: Props) {
                 contentContainerStyle={styles.stopListContent}
                 activationDistance={0}
                 onDragEnd={({ data }) => {
+                  if (isTripFinalized) return;
                   const normalized: Waypoint[] = data.map(({ ...item }, idx) => {
                     const { __dragKey, ...wp } = item;
                     void __dragKey;
@@ -1474,7 +1621,11 @@ export function TripPlannerScreen({ tripId }: Props) {
                     : null;
                   return (
                     <View style={[styles.stopRow, isActive && styles.stopRowActive]}>
-                      <Pressable style={styles.dragHandle} onPressIn={drag}>
+                      <Pressable
+                        style={[styles.dragHandle, isTripFinalized && styles.dragHandleDisabled]}
+                        disabled={isTripFinalized}
+                        onPressIn={isTripFinalized ? undefined : drag}
+                      >
                         <Ionicons name="reorder-three-outline" size={16} color="#94a3b8" />
                       </Pressable>
                       <View style={styles.timelineNode}>
@@ -1487,22 +1638,11 @@ export function TripPlannerScreen({ tripId }: Props) {
                         </Text>
                       </View>
                       <Pressable
-                        style={styles.removeStopBtn}
+                        style={[styles.removeStopBtn, isTripFinalized && styles.removeStopBtnDisabled]}
+                        disabled={isTripFinalized}
                         onPress={() => {
-                          Alert.alert("Remove stop", `Remove \"${item.name}\" from this itinerary?`, [
-                            { text: "Cancel", style: "cancel" },
-                            {
-                              text: "Remove",
-                              style: "destructive",
-                              onPress: async () => {
-                                const next = waypoints
-                                  .filter((_, i) => i !== idx)
-                                  .map((point, order) => ({ ...point, order }));
-                                await persistWaypoints(next);
-                                notify("info", "Stop removed.");
-                              },
-                            },
-                          ]);
+                          if (isTripFinalized) return;
+                          setRemoveStopConfirm({ index: idx, name: item.name });
                         }}
                       >
                         <Ionicons name="close" size={18} color="#94a3b8" />
@@ -1515,6 +1655,91 @@ export function TripPlannerScreen({ tripId }: Props) {
           ) : null}
         </BottomSheetView>
       </BottomSheet>
+      <Modal transparent animationType="fade" visible={Boolean(removeStopConfirm)} onRequestClose={() => setRemoveStopConfirm(null)}>
+        <Pressable style={styles.confirmBackdrop} onPress={() => setRemoveStopConfirm(null)}>
+          <Pressable style={styles.confirmCard} onPress={(event) => event.stopPropagation()}>
+            <Text style={styles.confirmTitle}>Remove stop?</Text>
+            <Text style={styles.confirmMessage}>
+              {removeStopConfirm ? `Remove "${removeStopConfirm.name}" from this itinerary?` : ""}
+            </Text>
+            <View style={styles.confirmActions}>
+              <Pressable style={styles.confirmCancelBtn} onPress={() => setRemoveStopConfirm(null)}>
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.confirmRemoveBtn} onPress={() => void confirmRemoveStop()}>
+                <Text style={styles.confirmRemoveText}>Remove</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      <Modal transparent animationType="fade" visible={optimizeMenuOpen} onRequestClose={() => setOptimizeMenuOpen(false)}>
+        <Pressable style={styles.confirmBackdrop} onPress={() => setOptimizeMenuOpen(false)}>
+          <Pressable style={styles.confirmCard} onPress={(event) => event.stopPropagation()}>
+            <Text style={styles.confirmTitle}>Optimize settings</Text>
+            <Text style={styles.confirmMessage}>Set day start/end and default visit minutes for route optimization.</Text>
+            <TextInput
+              value={dayStartMinutesInput}
+              onChangeText={setDayStartMinutesInput}
+              keyboardType="number-pad"
+              placeholder="Day start in minutes"
+              style={styles.inlineNumberInput}
+            />
+            <TextInput
+              value={dayEndMinutesInput}
+              onChangeText={setDayEndMinutesInput}
+              keyboardType="number-pad"
+              placeholder="Day end in minutes"
+              style={styles.inlineNumberInput}
+            />
+            <TextInput
+              value={defaultVisitMinutesInput}
+              onChangeText={setDefaultVisitMinutesInput}
+              keyboardType="number-pad"
+              placeholder="Default visit minutes"
+              style={styles.inlineNumberInput}
+            />
+            <View style={styles.confirmActions}>
+              <Pressable style={styles.confirmCancelBtn} onPress={() => setOptimizeMenuOpen(false)}>
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.confirmRemoveBtn}
+                onPress={async () => {
+                  if (!trip) return;
+                  const dayStartMinutes = Math.max(
+                    0,
+                    Math.min(23 * 60 + 59, Number.parseInt(dayStartMinutesInput, 10) || 9 * 60)
+                  );
+                  const dayEndMinutes = Math.max(
+                    dayStartMinutes + 30,
+                    Math.min(24 * 60, Number.parseInt(dayEndMinutesInput, 10) || 20 * 60)
+                  );
+                  const defaultVisitMinutes = Math.max(
+                    5,
+                    Number.parseInt(defaultVisitMinutesInput, 10) || 60
+                  );
+                  await api.updateTrip(
+                    tripId,
+                    buildTripUpdateBody(trip, {
+                      optimizationSettings: {
+                        dayStartMinutes,
+                        dayEndMinutes,
+                        defaultVisitMinutes,
+                      },
+                    })
+                  );
+                  await refetch();
+                  setOptimizeMenuOpen(false);
+                  notify("success", "Optimization settings saved.");
+                }}
+              >
+                <Text style={styles.confirmRemoveText}>Save</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1829,6 +2054,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  dragHandleDisabled: {
+    opacity: 0.45,
+  },
   timelineNode: {
     width: 34,
     height: 34,
@@ -1847,6 +2075,45 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  removeStopBtnDisabled: {
+    opacity: 0.45,
+  },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 16,
+    backgroundColor: "#ffffff",
+    padding: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  confirmTitle: { fontSize: 18, fontWeight: "700", color: "#111827" },
+  confirmMessage: { fontSize: 14, color: "#475569", lineHeight: 20 },
+  confirmActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 4 },
+  confirmCancelBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    backgroundColor: "#ffffff",
+  },
+  confirmCancelText: { color: "#334155", fontWeight: "600" },
+  confirmRemoveBtn: {
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    backgroundColor: "#dc2626",
+  },
+  confirmRemoveText: { color: "#ffffff", fontWeight: "700" },
   removeStopIcon: { color: "#94a3b8", fontWeight: "800", fontSize: 13 },
   sheetActionRow: { flexDirection: "row", gap: 8, alignItems: "center", flexWrap: "nowrap" },
   row: { flexDirection: "row", gap: 8, alignItems: "center" },
@@ -1896,7 +2163,37 @@ const styles = StyleSheet.create({
     borderBottomColor: "#f1f5f9",
     justifyContent: "center",
   },
+  submenuItemDisabled: {
+    opacity: 0.45,
+  },
   submenuText: { color: "#0f172a", fontWeight: "600", fontSize: 13 },
+  conflictsCard: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#fed7aa",
+    backgroundColor: "#fffbeb",
+    borderRadius: 12,
+    padding: 10,
+    gap: 4,
+  },
+  conflictsTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#9a3412",
+  },
+  conflictsItem: {
+    fontSize: 12,
+    color: "#7c2d12",
+  },
+  inlineNumberInput: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: "#0f172a",
+  },
   myLocationFab: {
     position: "absolute",
     right: 12,

@@ -14,7 +14,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { MapPin, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -89,12 +90,16 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-emerald-50 px-4 py-6 sm:py-8">
       <Card className="w-full max-w-md my-auto">
         <CardHeader className="text-center">
-          <Link href="/" className="inline-flex items-center justify-center gap-2 mb-2">
-            <MapPin className="h-7 w-7 sm:h-8 sm:w-8 text-blue-600" />
-            <span className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">
-              Viazo
-            </span>
-          </Link>
+          <div className="flex flex-col items-center gap-2 mb-1">
+            <SiteLogoLink />
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-blue-700 transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+              Back to home
+            </Link>
+          </div>
           <CardTitle className="text-xl">Create an account</CardTitle>
           <CardDescription>Start planning your dream trip</CardDescription>
         </CardHeader>

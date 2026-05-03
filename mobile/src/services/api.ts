@@ -1,5 +1,15 @@
 import { env } from "@/config/env";
-import type { ApiUser, LocationSearchResult, RouteSummary, Trip, Waypoint } from "@/types/domain";
+import type {
+  ApiUser,
+  DiscoveryGem,
+  GuideArticle,
+  LocationSearchResult,
+  RouteSummary,
+  SavedGem,
+  StaycationListing,
+  Trip,
+  Waypoint,
+} from "@/types/domain";
 import { getAccessToken, clearAccessToken } from "./session";
 
 export class ApiError extends Error {
@@ -32,12 +42,66 @@ type SearchCacheEntry = {
   savedAt: number;
   data: LocationSearchResult[];
 };
+type RetrySuppressionEntry = { until: number; reason: string };
 
 const SEARCH_CACHE_TTL_MS = 30_000;
+const SEARCH_RETRY_SUPPRESSION_MS = 12_000;
+const SEARCH_MAX_RETRIES = 2;
 const searchLocationsCache = new Map<string, SearchCacheEntry>();
 const searchPoisCache = new Map<string, SearchCacheEntry>();
 const inflightSearchLocations = new Map<string, Promise<LocationSearchResult[]>>();
 const inflightSearchPois = new Map<string, Promise<LocationSearchResult[]>>();
+const suppressedSearchKeys = new Map<string, RetrySuppressionEntry>();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const shouldRetryStatus = (status: number) => status === 429 || (status >= 500 && status <= 599);
+
+const getSuppressedReason = (key: string) => {
+  const entry = suppressedSearchKeys.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.until) {
+    suppressedSearchKeys.delete(key);
+    return null;
+  }
+  return entry.reason;
+};
+
+const suppressSearchKey = (key: string, reason: string) => {
+  suppressedSearchKeys.set(key, { until: Date.now() + SEARCH_RETRY_SUPPRESSION_MS, reason });
+};
+
+async function fetchJsonWithRetry<T>(url: string, keyForSuppression: string, options?: RequestInit): Promise<T | null> {
+  const suppressedReason = getSuppressedReason(keyForSuppression);
+  if (suppressedReason) return null;
+
+  for (let attempt = 0; attempt <= SEARCH_MAX_RETRIES; attempt += 1) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) {
+        return (await res.json().catch(() => null)) as T | null;
+      }
+      if (!shouldRetryStatus(res.status) || attempt === SEARCH_MAX_RETRIES) {
+        if (shouldRetryStatus(res.status)) {
+          suppressSearchKey(keyForSuppression, `status:${res.status}`);
+        }
+        return null;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return null;
+      }
+      if (attempt === SEARCH_MAX_RETRIES) {
+        suppressSearchKey(keyForSuppression, error instanceof Error ? error.message : "network_error");
+        return null;
+      }
+    }
+    const baseDelay = 250 * 2 ** attempt;
+    const jitter = Math.floor(Math.random() * 120);
+    await sleep(baseDelay + jitter);
+  }
+  return null;
+}
 
 function isLikelyUnreachableHost(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -103,7 +167,8 @@ export const api = {
         ? globalThis.crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const proximityKey = proximity ? `${proximity.lat.toFixed(4)},${proximity.lng.toFixed(4)}` : "none";
-    const cacheKey = `${query.trim().toLowerCase()}|${proximityKey}|${limit}`;
+    const normalizedQuery = query.trim().toLowerCase();
+    const cacheKey = `${normalizedQuery}|${proximityKey}|${limit}|${sessionToken}`;
     const cached = searchPoisCache.get(cacheKey);
     if (cached && Date.now() - cached.savedAt <= SEARCH_CACHE_TTL_MS) {
       return cached.data;
@@ -120,11 +185,11 @@ export const api = {
       language: "en",
     });
     if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
-    const suggestRes = await fetch(
-      `https://api.mapbox.com/search/searchbox/v1/suggest?${params.toString()}`
+    const suggestPayload = await fetchJsonWithRetry<{ suggestions?: unknown[] }>(
+      `https://api.mapbox.com/search/searchbox/v1/suggest?${params.toString()}`,
+      `pois:suggest:${normalizedQuery}|${proximityKey}|${limit}`
     );
-    if (!suggestRes.ok) return [];
-    const suggestPayload = await suggestRes.json().catch(() => ({ suggestions: [] }));
+    if (!suggestPayload) return [];
     const suggestions = Array.isArray(suggestPayload?.suggestions) ? suggestPayload.suggestions : [];
     const top = suggestions
       .filter((s: unknown) => {
@@ -139,11 +204,13 @@ export const api = {
           access_token: token,
           session_token: sessionToken,
         });
-        const retrieveRes = await fetch(
-          `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(String(s.mapbox_id ?? ""))}?${retrieveParams.toString()}`
+        const mapboxId = String(s.mapbox_id ?? "");
+        if (!mapboxId) return null;
+        const retrievePayload = await fetchJsonWithRetry<{ features?: unknown[] }>(
+          `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${retrieveParams.toString()}`,
+          `pois:retrieve:${mapboxId}|${sessionToken}`
         );
-        if (!retrieveRes.ok) return null;
-        const retrievePayload = await retrieveRes.json().catch(() => ({ features: [] }));
+        if (!retrievePayload) return null;
         const featureRaw = Array.isArray(retrievePayload?.features) ? retrievePayload.features[0] : null;
         const feature = asRecord(featureRaw);
         const geometry = asRecord(feature.geometry);
@@ -158,7 +225,7 @@ export const api = {
           firstSegment(featureProps.place_formatted) ??
           firstSegment(s.full_address);
         return {
-          id: String(featureProps.mapbox_id ?? s.mapbox_id),
+          id: String(featureProps.mapbox_id ?? mapboxId),
           name: String(preferredName || "Unknown place"),
           fullName: String(
             featureProps.full_address ??
@@ -221,12 +288,15 @@ export const api = {
     if (options?.bbox && options.bbox.length === 4) {
       params.set("bbox", options.bbox.map((v) => String(v)).join(","));
     }
-    const res = await fetch(
+    if (options?.sessionToken) {
+      params.set("session_token", options.sessionToken);
+    }
+    const payload = await fetchJsonWithRetry<{ features?: unknown[] }>(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?${params.toString()}`,
+      `locations:suggest:${cacheKey}`,
       { signal: options?.signal }
     );
-    if (!res.ok) return [];
-    const payload = await res.json().catch(() => ({ features: [] }));
+    if (!payload) return [];
     const features = Array.isArray(payload?.features) ? payload.features : [];
       const rows = features
       .map((featureUnknown: unknown) => {
@@ -440,5 +510,46 @@ export const api = {
     request<{ id: string; name: string | null; email: string; plan: "FREE" | "PRO" | "TEAM" }>(
       "/api/admin/users",
       { method: "PATCH", body: JSON.stringify({ userId, plan }) }
+    ),
+  discoveryGems: (input?: { category?: string; region?: string; limit?: number }) =>
+    request<{
+      categories: { key: string; label: string }[];
+      regions: { key: string; label: string }[];
+      gems: DiscoveryGem[];
+    }>(
+      `/api/gems?category=${encodeURIComponent(input?.category || "waterfalls")}&region=${encodeURIComponent(
+        input?.region || "england"
+      )}&limit=${encodeURIComponent(String(input?.limit || 12))}`
+    ),
+  savedGems: (tripId: string) => request<SavedGem[]>(`/api/gems/saved?tripId=${encodeURIComponent(tripId)}`),
+  saveGem: (gemId: string, body: { tripId: string; name: string; category: string; lat: number; lng: number }) =>
+    request<SavedGem>(`/api/gems/${encodeURIComponent(gemId)}/save`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  unsaveGem: (gemId: string, tripId: string) =>
+    request<{ success: boolean }>(
+      `/api/gems/${encodeURIComponent(gemId)}/save?tripId=${encodeURIComponent(tripId)}`,
+      {
+        method: "DELETE",
+      }
+    ),
+  guides: (input?: { region?: string; category?: string }) =>
+    request<GuideArticle[]>(
+      `/api/guides?region=${encodeURIComponent(input?.region || "")}&category=${encodeURIComponent(
+        input?.category || ""
+      )}`
+    ),
+  staycations: (input?: { region?: string; tags?: string[]; budgetBand?: string }) =>
+    request<StaycationListing[]>(
+      `/api/staycations?region=${encodeURIComponent(input?.region || "")}&budgetBand=${encodeURIComponent(
+        input?.budgetBand || ""
+      )}&tags=${encodeURIComponent((input?.tags || []).join(","))}`
+    ),
+  parkingNearby: (lat: number, lng: number, radius = 3500) =>
+    request<{ id: string; name: string; lat: number; lng: number; address: string; confidenceScore: number }[]>(
+      `/api/parking/nearby?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(
+        String(lng)
+      )}&radius=${encodeURIComponent(String(radius))}`
     ),
 };

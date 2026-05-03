@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Logo } from "@/components/ui/Logo";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import {
   Sheet,
   SheetContent,
@@ -28,9 +28,6 @@ export function MarketingNav({ context }: MarketingNavProps) {
   const { status } = useSession();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const androidAppUrl =
-    process.env.NEXT_PUBLIC_ANDROID_APP_URL ??
-    "https://play.google.com/store/apps/details?id=com.viazo.app";
 
   const close = () => setOpen(false);
   const isAuthed = status === "authenticated";
@@ -53,48 +50,44 @@ export function MarketingNav({ context }: MarketingNavProps) {
       )}
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2">
-        <Link
-          href="/"
-          className="flex items-center min-w-0 touch-manipulation rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2"
+        <SiteLogoLink
+          className="md:w-[140px] shrink-0"
           onClick={close}
-        >
-          <span className="hidden min-[361px]:block">
-            <Logo size="md" variant="default" />
-          </span>
-          <span className="min-[361px]:hidden">
-            <Logo size="sm" variant="default" />
-          </span>
-        </Link>
+        />
 
-        <div className="hidden md:flex items-center gap-1 lg:gap-3">
-          {context === "pricing" && (
-            <Link href="/" className={cn(navLinkClass, "px-2")}>
-              Home
-            </Link>
+        <div className="hidden md:flex items-center justify-center flex-1 min-w-0 gap-0.5 lg:gap-1">
+          {context === "home" && (
+            <>
+              <Link href="/#features" className={cn(navLinkClass, "px-2 lg:px-3")}>
+                Features
+              </Link>
+              <Link href="/pricing" className={cn(navLinkClass, "px-2 lg:px-3")}>
+                Pricing
+              </Link>
+            </>
           )}
-          <Link href="/pricing" className={cn(navLinkClass, "px-2")}>
-            Pricing
-          </Link>
-          <a
-            href={androidAppUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(navLinkClass, "px-2")}
-          >
-            Android app
-          </a>
+          {context === "pricing" && (
+            <>
+              <Link href="/" className={cn(navLinkClass, "px-2")}>
+                Home
+              </Link>
+              <Link href="/pricing" className={cn(navLinkClass, "px-2")}>
+                Pricing
+              </Link>
+            </>
+          )}
+        </div>
+
+        <div className="hidden md:flex items-center justify-end gap-1 shrink-0 md:min-w-[200px]">
           {status === "loading" ? (
-            <div
-              className="ml-1 h-9 w-[11rem] rounded-md bg-slate-200/60 animate-pulse"
-              aria-hidden
-            />
+            <div className="h-9 w-[11rem] rounded-md bg-slate-200/60 animate-pulse" aria-hidden />
           ) : isAuthed ? (
             <>
               <Link href="/dashboard" className={cn(navLinkClass, "px-2")}>
                 Dashboard
               </Link>
               <Link href="/planner" className="ml-1">
-                <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
+                <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow rounded-full px-4">
                   Open planner
                 </Button>
               </Link>
@@ -105,8 +98,8 @@ export function MarketingNav({ context }: MarketingNavProps) {
                 Sign in
               </Link>
               <Link href="/auth/register" className="ml-1">
-                <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
-                  Get started
+                <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow rounded-full px-4">
+                  Start planning
                 </Button>
               </Link>
             </>
@@ -135,16 +128,18 @@ export function MarketingNav({ context }: MarketingNavProps) {
                     Home
                   </Button>
                 </Link>
+                {context === "home" && (
+                  <Link href="/#features" onClick={close}>
+                    <Button variant="ghost" className="w-full justify-start h-11 text-base">
+                      Features
+                    </Button>
+                  </Link>
+                )}
                 <Link href="/pricing" onClick={close}>
                   <Button variant="ghost" className="w-full justify-start h-11 text-base">
                     Pricing
                   </Button>
                 </Link>
-                <a href={androidAppUrl} target="_blank" rel="noreferrer" onClick={close}>
-                  <Button variant="ghost" className="w-full justify-start h-11 text-base">
-                    Android app
-                  </Button>
-                </a>
                 {status === "loading" ? (
                   <div className="h-11 rounded-md bg-slate-200/60 animate-pulse" aria-hidden />
                 ) : isAuthed ? (
@@ -166,7 +161,7 @@ export function MarketingNav({ context }: MarketingNavProps) {
                       </Button>
                     </Link>
                     <Link href="/auth/register" onClick={close}>
-                      <Button className="w-full h-11 text-base">Get started</Button>
+                      <Button className="w-full h-11 text-base">Start planning</Button>
                     </Link>
                   </>
                 )}

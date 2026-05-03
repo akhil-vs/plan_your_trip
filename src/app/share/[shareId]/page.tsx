@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { MapPin, Route, Copy } from "lucide-react";
 
 interface SharedTrip {
@@ -110,12 +111,18 @@ export default function SharedTripPage() {
   };
 
   if (loading) {
-    return <div className="min-h-screen p-8 text-center text-sm text-muted-foreground">Loading shared itinerary...</div>;
+    return (
+      <div className="min-h-screen p-8 flex flex-col items-center text-center text-sm text-muted-foreground gap-4">
+        <SiteLogoLink />
+        <p>Loading shared itinerary…</p>
+      </div>
+    );
   }
 
   if (error || !trip) {
     return (
-      <div className="min-h-screen p-8 text-center">
+      <div className="min-h-screen p-8 text-center flex flex-col items-center">
+        <SiteLogoLink className="mb-6" />
         <p className="text-red-600">{error || "Shared itinerary not found"}</p>
         <Link href="/">
           <Button className="mt-4">Go Home</Button>
@@ -126,7 +133,10 @@ export default function SharedTripPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto px-3 sm:px-4 py-5 sm:py-8">
+      <div className="max-w-3xl mx-auto px-3 sm:px-4 pt-5 sm:pt-8 pb-2 flex justify-center sm:justify-start">
+        <SiteLogoLink />
+      </div>
+      <div className="max-w-3xl mx-auto px-3 sm:px-4 pb-5 sm:pb-8">
         <Card>
           <CardHeader className="space-y-2">
             <CardTitle className="text-xl sm:text-2xl break-words">{trip.name}</CardTitle>

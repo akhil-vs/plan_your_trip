@@ -9,6 +9,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import {
   ArrowLeft,
   BarChart3,
@@ -226,15 +227,16 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <main id="main" className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 space-y-5">
-        <div className="flex items-center justify-between">
-          <Link
-            href="/dashboard"
-            className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-2 inline-flex")}
-          >
-            <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
-            Back to dashboard
-          </Link>
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
+          <SiteLogoLink />
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/dashboard"
+              className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-2 inline-flex")}
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+              Back to dashboard
+            </Link>
             {[7, 30, 90].map((days) => (
               <Button
                 key={days}

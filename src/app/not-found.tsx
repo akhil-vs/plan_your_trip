@@ -1,8 +1,12 @@
 import Link from "next/link";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 
 export default function NotFound() {
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center px-4 py-16 text-center">
+      <div className="mb-6 flex justify-center">
+        <SiteLogoLink />
+      </div>
       <div className="mb-6 text-brand-primary" aria-hidden>
         <svg width="120" height="120" viewBox="0 0 120 120" fill="none" className="mx-auto">
           <rect x="8" y="8" width="104" height="104" rx="12" className="stroke-slate-200" strokeWidth="2" fill="none" />

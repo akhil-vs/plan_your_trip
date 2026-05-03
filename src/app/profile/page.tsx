@@ -9,6 +9,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { ArrowLeft, Check } from "lucide-react";
 
 type Plan = "FREE" | "PRO" | "TEAM";
@@ -64,15 +65,18 @@ export default function ProfilePage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8 space-y-5">
-        <div className="flex items-center justify-between">
-          <Link
-            href="/dashboard"
-            className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-2 inline-flex")}
-          >
-            <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
-            Back to dashboard
-          </Link>
-          <Badge variant="outline">Current plan: {plan}</Badge>
+        <div className="flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
+          <SiteLogoLink />
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/dashboard"
+              className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-2 inline-flex")}
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+              Back to dashboard
+            </Link>
+            <Badge variant="outline">Current plan: {plan}</Badge>
+          </div>
         </div>
 
         <Card>

@@ -13,8 +13,8 @@ function normalizeSuggestCacheKey(
   return ["search", "suggest", trimmed, prox, language, limit];
 }
 
-function normalizeRetrieveCacheKey(mapboxId: string, language: string): string[] {
-  return ["search", "retrieve", mapboxId, language.toLowerCase()];
+function normalizeRetrieveCacheKey(mapboxId: string, language: string, sessionToken: string): string[] {
+  return ["search", "retrieve", mapboxId, language.toLowerCase(), sessionToken];
 }
 
 interface SearchSuggestionResult {
@@ -110,7 +110,7 @@ async function getCachedRetrieve(
   token: string,
   sessionToken: string
 ) {
-  const cacheKey = normalizeRetrieveCacheKey(mapboxId, language);
+  const cacheKey = normalizeRetrieveCacheKey(mapboxId, language, sessionToken);
   const cachedRetrieve = unstable_cache(
     () => fetchMapboxRetrieve(mapboxId, language, token, sessionToken),
     cacheKey,
@@ -144,7 +144,7 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json(retrieved, {
       headers: {
-        "Cache-Control": "public, s-maxage=86400, stale-while-revalidate",
+        "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=86400",
       },
     });
   }
@@ -166,7 +166,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const results = await getCachedSearch();
-    return NextResponse.json(results);
+    return NextResponse.json(results, {
+      headers: {
+        "Cache-Control": "public, s-maxage=900, stale-while-revalidate=1800",
+      },
+    });
   } catch (err) {
     console.error("Search error:", err);
     return NextResponse.json(

@@ -5,6 +5,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { Loader2, UserPlus } from "lucide-react";
 
 export default function InviteAcceptPage() {
@@ -45,7 +46,10 @@ export default function InviteAcceptPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-6">
         <Card className="w-full max-w-md">
-          <CardHeader>
+          <CardHeader className="text-center space-y-1">
+            <div className="flex justify-center pb-1">
+              <SiteLogoLink />
+            </div>
             <CardTitle>Trip Invite</CardTitle>
             <CardDescription>Sign in to accept this collaboration invite.</CardDescription>
           </CardHeader>
@@ -69,7 +73,10 @@ export default function InviteAcceptPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-6">
       <Card className="w-full max-w-md">
-        <CardHeader>
+        <CardHeader className="text-center space-y-1">
+          <div className="flex justify-center pb-1">
+            <SiteLogoLink />
+          </div>
           <CardTitle>Join Trip Collaboration</CardTitle>
           <CardDescription>
             Accept this invite to start planning locations, stays, and restaurants with your team.

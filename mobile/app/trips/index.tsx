@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Link, router } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -6,8 +6,10 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   ImageBackground,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -23,6 +25,7 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { SurfaceCard } from "@/components/ui/SurfaceCard";
 import { TextField } from "@/components/ui/TextField";
 import { api } from "@/services/api";
+import { trackEvent } from "@/lib/analytics";
 import {
   buildCreateTripBody,
   DEFAULT_TRIP_NAME,
@@ -43,47 +46,66 @@ const PUBLIC_TRIP_IMAGES = [
   "https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=1000&q=80",
   "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80",
 ];
+const ITINERARY_CARD_IMAGES = [
+  "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=1200&q=80",
+  "https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=1200&q=80",
+];
+const DISCOVERY_DEFAULT_CATEGORY = "waterfalls";
+const DISCOVERY_DEFAULT_REGION = "england";
 
-function TripRow({
+function TripCard({
   item,
   onOpen,
   onCollaboration,
+  imageUri,
 }: {
   item: Trip;
   onOpen: () => void;
   onCollaboration: () => void;
+  imageUri?: string | null;
 }) {
   const status = item.status === "FINALIZED" ? "Finalized" : "Draft";
   const isFinal = item.status === "FINALIZED";
   return (
-    <Pressable style={({ pressed }) => [styles.row, pressed && styles.rowPressed]} onPress={onOpen}>
-      <View style={styles.rowMain}>
+    <View style={styles.itineraryCard}>
+      <View style={styles.rowTop}>
+        <View style={[styles.badge, isFinal ? styles.badgeFinal : styles.badgeDraft]}>
+          <Text style={[styles.badgeText, isFinal ? styles.badgeTextFinal : styles.badgeTextDraft]}>{status}</Text>
+        </View>
+        <Pressable onPress={onOpen} hitSlop={10}>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+      </View>
+      <Pressable onPress={onOpen}>
         <Text style={styles.rowTitle} numberOfLines={2}>
           {item.name}
         </Text>
-        <Text style={styles.rowMeta}>
+        <View style={styles.itineraryMetaRow}>
+          <Ionicons name="location-outline" size={15} color={colors.textMuted} />
+          <Text style={styles.rowMeta}>
           {item.waypoints.length} {item.waypoints.length === 1 ? "stop" : "stops"}
-        </Text>
-        <View style={styles.tripActions}>
-          <Pressable style={styles.tripActionBtn} onPress={onOpen}>
-            <Text style={styles.tripActionText}>Open planner</Text>
-          </Pressable>
-          <Pressable style={styles.tripActionBtn} onPress={onCollaboration}>
-            <Text style={styles.tripActionText}>Members & chat</Text>
-          </Pressable>
+          </Text>
         </View>
+      </Pressable>
+      {imageUri ? <Image source={{ uri: imageUri }} style={styles.itineraryImage} /> : null}
+      <View style={styles.tripActions}>
+        <Pressable style={[styles.tripActionBtn, styles.tripActionPrimary]} onPress={onOpen}>
+          <Ionicons name="calendar-outline" size={14} color="#fff" />
+          <Text style={[styles.tripActionText, styles.tripActionTextPrimary]}>Open planner</Text>
+        </Pressable>
+        <Pressable style={[styles.tripActionBtn, styles.tripActionSecondary]} onPress={onCollaboration}>
+          <Ionicons name="chatbox-ellipses-outline" size={14} color={colors.brandPrimary} />
+          <Text style={styles.tripActionText}>Members & chat</Text>
+        </Pressable>
       </View>
-      <View style={[styles.badge, isFinal ? styles.badgeFinal : styles.badgeDraft]}>
-        <Text style={[styles.badgeText, isFinal ? styles.badgeTextFinal : styles.badgeTextDraft]}>{status}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-    </Pressable>
+    </View>
   );
 }
 
 export default function TripsScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
+  const listRef = useRef<FlatList<Trip>>(null);
   const signOut = useAuthStore((s) => s.signOut);
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["trips"],
@@ -91,9 +113,37 @@ export default function TripsScreen() {
   });
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState(DISCOVERY_DEFAULT_CATEGORY);
+  const [selectedRegion, setSelectedRegion] = useState(DISCOVERY_DEFAULT_REGION);
   const [newName, setNewName] = useState("");
   const [starterId, setStarterId] = useState<string | "blank">("blank");
   const [creating, setCreating] = useState(false);
+  const [showAllTrips, setShowAllTrips] = useState(false);
+  const toggleViewAll = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setShowAllTrips((prev) => !prev);
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    });
+  };
+  const prefetchTrip = (tripId: string) =>
+    queryClient.prefetchQuery({
+      queryKey: ["trip", tripId],
+      queryFn: () => api.trip(tripId),
+      staleTime: 5 * 60 * 1000,
+    });
+  const { data: discoveryData, isFetching: discoveryFetching } = useQuery({
+    queryKey: ["discovery-gems", selectedCategory, selectedRegion],
+    queryFn: () => api.discoveryGems({ category: selectedCategory, region: selectedRegion }),
+  });
+  const { data: guides } = useQuery({
+    queryKey: ["guides", selectedCategory, selectedRegion],
+    queryFn: () => api.guides({ category: selectedCategory, region: selectedRegion }),
+  });
+  const { data: staycations } = useQuery({
+    queryKey: ["staycations", selectedRegion],
+    queryFn: () => api.staycations({ region: selectedRegion }),
+  });
 
   const openNewItineraryModal = () => {
     setNewName("");
@@ -121,8 +171,7 @@ export default function TripsScreen() {
   const myTrips = data?.myTrips ?? [];
   const publicTrips = data?.publicTrips ?? [];
   const featuredTrip = myTrips[0];
-  const remainingTrips = myTrips.slice(1);
-  const plannerTarget = featuredTrip?.id ? `/planner/${featuredTrip.id}` : null;
+  const remainingTrips = showAllTrips ? myTrips : myTrips.slice(1);
 
   const header = (
     <View style={styles.headerBlock}>
@@ -156,47 +205,27 @@ export default function TripsScreen() {
         </View>
       </View>
 
-      <Pressable style={styles.newTripButton} onPress={openNewItineraryModal}>
-        <Ionicons name="add" size={18} color="#fff" />
-        <Text style={styles.newTripText}>+ New itinerary</Text>
-      </Pressable>
-
       <View style={styles.sectionRow}>
-        <Text style={styles.sectionTitle}>My Itineraries</Text>
-        <Text style={styles.sectionLink}>View all</Text>
+        <View>
+          <Text style={styles.sectionTitle}>My Itineraries</Text>
+          <Text style={styles.sectionSubtitle}>Manage your upcoming journeys and drafts.</Text>
+        </View>
+        <Pressable onPress={toggleViewAll}>
+          <Text style={styles.sectionLink}>{showAllTrips ? "Show less" : "View all"}</Text>
+        </Pressable>
       </View>
 
-      {featuredTrip ? (
-        <Pressable style={({ pressed }) => [styles.heroCard, pressed && styles.rowPressed]} onPress={() => router.push(`/planner/${featuredTrip.id}`)}>
-          <ImageBackground source={{ uri: HERO_IMAGE }} style={styles.heroImage} imageStyle={styles.heroImageRadius}>
-            <View style={styles.heroBadge}>
-              <Ionicons name="checkmark-circle-outline" size={14} color="#166534" />
-              <Text style={styles.heroBadgeText}>{featuredTrip.status === "FINALIZED" ? "Finalized" : "Draft"}</Text>
-            </View>
-          </ImageBackground>
-          <View style={styles.heroContent}>
-            <Text style={styles.heroTitle} numberOfLines={2}>
-              {featuredTrip.name}
-            </Text>
-            <View style={styles.heroMetaRow}>
-              <Ionicons name="location-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.heroMeta}>
-                {featuredTrip.waypoints.length} {featuredTrip.waypoints.length === 1 ? "stop" : "stops"} •{" "}
-                {featuredTrip.dayPlans?.length ?? Math.max(1, Math.ceil(featuredTrip.waypoints.length / 3))} days
-              </Text>
-            </View>
-            <View style={styles.heroActions}>
-              <Pressable style={styles.heroPrimaryAction} onPress={() => router.push(`/planner/${featuredTrip.id}`)}>
-                <Ionicons name="calendar-outline" size={14} color="#fff" />
-                <Text style={styles.heroPrimaryActionText}>Open planner</Text>
-              </Pressable>
-              <Pressable style={styles.heroSecondaryAction} onPress={() => router.push(`/planner/${featuredTrip.id}/collaboration`)}>
-                <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
-              </Pressable>
-            </View>
-          </View>
-        </Pressable>
-      ) : (
+      {featuredTrip && !showAllTrips ? (
+        <TripCard
+          item={featuredTrip}
+          imageUri={null}
+          onOpen={() => {
+            void prefetchTrip(featuredTrip.id);
+            router.push(`/planner/${featuredTrip.id}`);
+          }}
+          onCollaboration={() => router.push(`/planner/${featuredTrip.id}/collaboration`)}
+        />
+      ) : !featuredTrip ? (
         <SurfaceCard style={styles.emptyCard}>
           <EmptyState
             title="No trips yet"
@@ -205,9 +234,9 @@ export default function TripsScreen() {
             <PrimaryButton label="Create your first trip" onPress={openNewItineraryModal} />
           </EmptyState>
         </SurfaceCard>
-      )}
+      ) : null}
 
-      {publicTrips.length > 0 ? (
+      {!showAllTrips && publicTrips.length > 0 ? (
         <View style={styles.publicBlock}>
           <Text style={styles.sectionTitle}>Public Trips</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.publicCarouselContent}>
@@ -246,6 +275,120 @@ export default function TripsScreen() {
             ))}
           </ScrollView>
         </View>
+      ) : null}
+      {!showAllTrips ? (
+      <View style={styles.publicBlock}>
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionTitle}>Discover Gems</Text>
+          <Pressable onPress={() => router.push("/saved")}>
+            <Text style={styles.sectionLink}>Saved</Text>
+          </Pressable>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.publicCarouselContent}>
+          {(discoveryData?.categories || []).map((cat) => (
+            <Pressable
+              key={cat.key}
+              style={[styles.filterChip, selectedCategory === cat.key && styles.filterChipActive]}
+              onPress={() => {
+                setSelectedCategory(cat.key);
+                trackEvent("discovery.category_changed", { category: cat.key });
+              }}
+            >
+              <Text style={[styles.filterChipText, selectedCategory === cat.key && styles.filterChipTextActive]}>
+                {cat.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.publicCarouselContent}>
+          {(discoveryData?.regions || []).map((region) => (
+            <Pressable
+              key={region.key}
+              style={[styles.filterChip, selectedRegion === region.key && styles.filterChipActive]}
+              onPress={() => {
+                setSelectedRegion(region.key);
+                trackEvent("discovery.region_changed", { region: region.key });
+              }}
+            >
+              <Text style={[styles.filterChipText, selectedRegion === region.key && styles.filterChipTextActive]}>
+                {region.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        {discoveryFetching ? <ActivityIndicator size="small" color={colors.brandPrimary} /> : null}
+        {(discoveryData?.gems || []).slice(0, 8).map((gem) => (
+          <Pressable
+            key={gem.id}
+            style={styles.discoveryRow}
+            onPress={async () => {
+              trackEvent("discovery.gem_opened", { gemId: gem.id, category: gem.category, region: gem.region });
+              if (!featuredTrip) {
+                Alert.alert(
+                  "Create an itinerary first",
+                  "Create an itinerary to save and route this gem.",
+                  [{ text: "OK", onPress: openNewItineraryModal }]
+                );
+                return;
+              }
+              try {
+                await api.saveGem(gem.id, {
+                  tripId: featuredTrip.id,
+                  name: gem.name,
+                  category: gem.category,
+                  lat: gem.lat,
+                  lng: gem.lng,
+                });
+                await queryClient.invalidateQueries({ queryKey: ["saved-gems", featuredTrip.id] });
+                Alert.alert("Saved", `"${gem.name}" saved to ${featuredTrip.name}.`, [
+                  {
+                    text: "Open planner",
+                    onPress: () => router.push(`/planner/${featuredTrip.id}`),
+                  },
+                  { text: "Stay here", style: "cancel" },
+                ]);
+              } catch (error) {
+                Alert.alert("Unable to save gem", error instanceof Error ? error.message : String(error));
+              }
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>{gem.name}</Text>
+              <Text style={styles.publicCardMeta}>{gem.categoryLabel} • {gem.regionLabel}</Text>
+            </View>
+            <Text style={styles.sectionLink}>{featuredTrip ? "Save" : "Open trip to save"}</Text>
+          </Pressable>
+        ))}
+      </View>
+      ) : null}
+      {!showAllTrips ? (
+      <View style={styles.publicBlock}>
+        <Text style={styles.sectionTitle}>Inspiration Guides</Text>
+        {(guides || []).map((guide) => (
+          <SurfaceCard key={guide.slug} style={styles.discoveryRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>{guide.title}</Text>
+              <Text style={styles.publicCardMeta}>{guide.summary}</Text>
+            </View>
+            <Text style={styles.publicCardMeta}>{guide.readMinutes} min</Text>
+          </SurfaceCard>
+        ))}
+      </View>
+      ) : null}
+      {!showAllTrips ? (
+      <View style={styles.publicBlock}>
+        <Text style={styles.sectionTitle}>Staycation Picks</Text>
+        {(staycations || []).slice(0, 4).map((stay) => (
+          <SurfaceCard key={stay.id} style={styles.discoveryRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>{stay.name}</Text>
+              <Text style={styles.publicCardMeta}>
+                {stay.tags.join(" • ")} • from £{stay.priceFrom}/night
+              </Text>
+            </View>
+          </SurfaceCard>
+        ))}
+      </View>
       ) : null}
 
     </View>
@@ -304,13 +447,18 @@ export default function TripsScreen() {
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           style={styles.list}
           data={remainingTrips}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TripRow
+          renderItem={({ item, index }) => (
+            <TripCard
               item={item}
-              onOpen={() => router.push(`/planner/${item.id}`)}
+              imageUri={index % 2 === 0 ? ITINERARY_CARD_IMAGES[index % ITINERARY_CARD_IMAGES.length] : null}
+              onOpen={() => {
+                void prefetchTrip(item.id);
+                router.push(`/planner/${item.id}`);
+              }}
               onCollaboration={() => router.push(`/planner/${item.id}/collaboration`)}
             />
           )}
@@ -327,16 +475,7 @@ export default function TripsScreen() {
           </View>
           <Text style={[styles.bottomMenuLabel, styles.bottomMenuLabelActive]}>Home</Text>
         </Pressable>
-        <Pressable
-          style={styles.bottomMenuItem}
-          onPress={() => {
-            if (plannerTarget) {
-              router.push(plannerTarget);
-              return;
-            }
-            openNewItineraryModal();
-          }}
-        >
+        <Pressable style={styles.bottomMenuItem} onPress={openNewItineraryModal}>
           <View style={styles.bottomMenuCircle}>
             <Ionicons name="map-outline" size={18} color={colors.textMuted} />
           </View>
@@ -374,23 +513,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#eef2ff",
   },
-  newTripButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: colors.brandPrimary,
-    borderRadius: radius.md,
-    paddingVertical: 12,
-    ...{
-      shadowColor: "#1d4ed8",
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.24,
-      shadowRadius: 10,
-      elevation: 5,
-    },
-  },
-  newTripText: { color: "#fff", fontWeight: "700", fontSize: 16 },
   spinner: { marginTop: space.xl },
   loading: { ...type.body, color: colors.textMuted, textAlign: "center", marginTop: space.md },
   bottomMenu: {
@@ -428,6 +550,7 @@ const styles = StyleSheet.create({
   bottomMenuLabelActive: { color: colors.brandPrimary, fontWeight: "700" },
   sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sectionTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
+  sectionSubtitle: { ...type.caption, marginTop: 2 },
   sectionLink: { color: "#3478f6", fontWeight: "500" },
   heroCard: {
     backgroundColor: colors.surface,
@@ -508,31 +631,41 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   publicStopsPillText: { fontSize: 11, color: colors.textSecondary, fontWeight: "600" },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
+  itineraryCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: space.lg,
     marginBottom: space.sm,
-    gap: space.md,
+    gap: space.sm,
   },
+  rowTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   rowPressed: { backgroundColor: colors.overlay },
-  rowMain: { flex: 1, minWidth: 0 },
   rowTitle: { ...type.headline, fontSize: 17 },
-  rowMeta: { ...type.caption, marginTop: 4 },
-  tripActions: { flexDirection: "row", gap: 8, marginTop: 10 },
-  tripActionBtn: {
-    borderWidth: 1,
-    borderColor: "#dbe3ef",
+  itineraryMetaRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
+  rowMeta: { ...type.caption },
+  itineraryImage: {
+    width: "100%",
+    height: 100,
     borderRadius: radius.md,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#f8fbff",
+    marginTop: 2,
   },
+  tripActions: { flexDirection: "row", gap: 10, marginTop: 8 },
+  tripActionBtn: {
+    flex: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  tripActionPrimary: { backgroundColor: "#1248dd" },
+  tripActionSecondary: { backgroundColor: "#dfe2f7" },
   tripActionText: { color: colors.brandPrimary, fontWeight: "700", fontSize: 12 },
+  tripActionTextPrimary: { color: "#fff" },
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill },
   badgeDraft: { backgroundColor: "#f1f5f9" },
   badgeFinal: { backgroundColor: "#dcfce7" },
@@ -564,4 +697,25 @@ const styles = StyleSheet.create({
   chipTitle: { fontSize: 15, fontWeight: "700", color: colors.text },
   chipTitleActive: { color: colors.brandPrimary },
   chipHint: { ...type.caption, marginTop: 4 },
+  filterChip: {
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: "#fff",
+  },
+  filterChipActive: { borderColor: colors.brandPrimary, backgroundColor: "#eff6ff" },
+  filterChipText: { color: colors.textSecondary, fontWeight: "600", fontSize: 12 },
+  filterChipTextActive: { color: colors.brandPrimary },
+  discoveryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: radius.md,
+    padding: space.md,
+    backgroundColor: "#fff",
+  },
 });

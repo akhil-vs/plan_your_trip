@@ -144,6 +144,11 @@ export function buildTripUpdateBody(
     dayPlans?: DayPlan[];
     name?: string;
     description?: string | null;
+    optimizationSettings?: {
+      dayStartMinutes?: number;
+      dayEndMinutes?: number;
+      defaultVisitMinutes?: number;
+    };
   }
 ): Record<string, unknown> {
   const waypoints = patch.waypoints ?? trip.waypoints ?? [];
@@ -154,9 +159,18 @@ export function buildTripUpdateBody(
     waypoints: waypointsForPutApi(waypoints),
     dayPlans: dayPlansForApi(dayPlans),
     optimizationSettings: {
-      dayStartMinutes: trip.optimizerDayStartMinutes ?? DEFAULT_OPTIMIZATION.dayStartMinutes,
-      dayEndMinutes: trip.optimizerDayEndMinutes ?? DEFAULT_OPTIMIZATION.dayEndMinutes,
-      defaultVisitMinutes: trip.optimizerDefaultVisitMinutes ?? DEFAULT_OPTIMIZATION.defaultVisitMinutes,
+      dayStartMinutes:
+        patch.optimizationSettings?.dayStartMinutes ??
+        trip.optimizerDayStartMinutes ??
+        DEFAULT_OPTIMIZATION.dayStartMinutes,
+      dayEndMinutes:
+        patch.optimizationSettings?.dayEndMinutes ??
+        trip.optimizerDayEndMinutes ??
+        DEFAULT_OPTIMIZATION.dayEndMinutes,
+      defaultVisitMinutes:
+        patch.optimizationSettings?.defaultVisitMinutes ??
+        trip.optimizerDefaultVisitMinutes ??
+        DEFAULT_OPTIMIZATION.defaultVisitMinutes,
     },
   };
 }

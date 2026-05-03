@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,7 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Logo } from "@/components/ui/Logo";
+import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { FadeIn } from "@/components/ui/FadeIn";
 import {
   OnboardingDestinationInput,
@@ -98,9 +97,7 @@ export default function OnboardingPage() {
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-brand-primary/5 via-background to-brand-accent/10">
       <header className="border-b border-border/60 bg-background/80 backdrop-blur-sm">
         <div className="mx-auto max-w-lg px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <Logo size="sm" />
-          </Link>
+          <SiteLogoLink />
           <span className="text-xs text-muted-foreground tabular-nums">
             Step {step + 1} of 3
           </span>

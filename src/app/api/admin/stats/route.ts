@@ -46,6 +46,8 @@ export async function GET(req: NextRequest) {
     tripsForGrowth,
     topPublicTrips,
     topCollaborativeTrips,
+    totalSavedGems,
+    savedByCategoryRaw,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.trip.count(),
@@ -116,6 +118,8 @@ export async function GET(req: NextRequest) {
         _count: { select: { waypoints: true, members: true } },
       },
     }),
+    prisma.savedPlace.count(),
+    prisma.savedPlace.groupBy({ by: ["category"], _count: { _all: true } }),
   ]);
 
   const planDistribution = ["FREE", "PRO", "TEAM"].map((plan) => ({
@@ -157,6 +161,12 @@ export async function GET(req: NextRequest) {
     finalizedTrips,
     publicTrips,
   };
+  const savedByCategory = savedByCategoryRaw
+    .map((entry) => ({ category: entry.category, count: entry._count._all }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+  const publicTripRate = totalTrips > 0 ? Number((publicTrips / totalTrips).toFixed(3)) : 0;
+  const savedPerTrip = totalTrips > 0 ? Number((totalSavedGems / totalTrips).toFixed(2)) : 0;
 
   return NextResponse.json({
     kpis: {
@@ -169,6 +179,9 @@ export async function GET(req: NextRequest) {
       newUsers7d: newUsersWindow,
       newTrips7d: newTripsWindow,
       windowDays,
+      totalSavedGems,
+      publicTripRate,
+      savedPerTrip,
     },
     planDistribution,
     growth,
@@ -178,6 +191,7 @@ export async function GET(req: NextRequest) {
     recentTrips,
     topPublicTrips,
     topCollaborativeTrips,
+    savedByCategory,
   });
 }
 

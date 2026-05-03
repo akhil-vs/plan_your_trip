@@ -69,3 +69,54 @@ export type LocationSearchResult = {
   userRatingsTotal?: number;
   openNow?: boolean;
 };
+
+export type GemCategoryKey =
+  | "waterfalls"
+  | "beaches"
+  | "wild_swimming"
+  | "family_friendly"
+  | "accessible"
+  | "castles";
+
+export type RegionKey = "england" | "scotland" | "wales" | "northern_ireland";
+
+export type DiscoveryGem = {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  category: GemCategoryKey;
+  categoryLabel: string;
+  region: RegionKey;
+  regionLabel: string;
+  kinds?: string;
+};
+
+export type SavedGem = {
+  id: string;
+  externalId: string;
+  name: string;
+  category: string;
+  lat: number;
+  lng: number;
+  notes?: string | null;
+  tripId: string;
+};
+
+export type GuideArticle = {
+  slug: string;
+  title: string;
+  summary: string;
+  region: RegionKey;
+  category: GemCategoryKey;
+  readMinutes: number;
+};
+
+export type StaycationListing = {
+  id: string;
+  name: string;
+  region: RegionKey;
+  tags: string[];
+  budgetBand: "budget" | "mid" | "premium";
+  priceFrom: number;
+};
