@@ -310,6 +310,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     (currentUserRole === "OWNER" || currentUserRole === "EDITOR") &&
     (tripStatus === "DRAFT" || isPublic);
   const canManageTrip = currentUserRole === "OWNER";
+  const canInviteTrip = currentUserRole === "OWNER" || currentUserRole === "EDITOR";
   const collaborationEnabled = canUseCollaboration(userPlan);
   const timelineEnabled = canUseActivityTimeline(userPlan);
   const effectiveTripId = tripId ?? activeTripId;
@@ -2447,7 +2448,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                   Collaboration is available on Pro and Team plans.
                 </p>
               ) : effectiveTripId ? (
-                <TripMembersPanel tripId={effectiveTripId} canManage={canManageTrip} />
+                <TripMembersPanel
+                  tripId={effectiveTripId}
+                  canManage={canManageTrip}
+                  canInvite={canInviteTrip}
+                />
               ) : (
                 <p className="text-xs text-muted-foreground">
                   Save the itinerary first to invite collaborators.

@@ -392,6 +392,7 @@ export const api = {
       {
         id: string;
         email: string;
+        token: string;
         role: "EDITOR" | "VIEWER";
         status: string;
         expiresAt: string;
@@ -445,10 +446,18 @@ export const api = {
       }[]
     >(`/api/trips/${tripId}/events?mode=history&limit=${limit}`),
   createInvite: (tripId: string, email: string, role: "EDITOR" | "VIEWER") =>
-    request<{ id: string; acceptUrl: string; emailDelivered: boolean }>(
-      `/api/trips/${tripId}/invites`,
-      { method: "POST", body: JSON.stringify({ email, role }) }
-    ),
+    request<{
+      id: string;
+      token: string;
+      acceptUrl: string;
+      emailDelivered: boolean;
+      emailWarning?: string | null;
+    }>(`/api/trips/${tripId}/invites`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  revokeInvite: (tripId: string, inviteId: string) =>
+    request<{ id: string }>(`/api/trips/${tripId}/invites`, {
+      method: "DELETE",
+      body: JSON.stringify({ inviteId }),
+    }),
   acceptInvite: (token: string) =>
     request<{ success: boolean; tripId: string; role: string }>(
       `/api/trips/invites/${token}/accept`,

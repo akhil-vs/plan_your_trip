@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "@/lib/randomUuid";
 import { getApiUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/prisma";
-import { canManageTrip, getTripAccess } from "@/lib/tripAccess";
+import { canInviteCollaborators, getTripAccess } from "@/lib/tripAccess";
 import { createTripEvent } from "@/lib/tripEvents";
 import { sendTripInviteEmail } from "@/lib/email";
 import { canUseCollaboration } from "@/lib/subscription";
@@ -24,7 +24,7 @@ export async function GET(
   }
   const { tripId } = await params;
   const access = await getTripAccess(tripId, authUser.id);
-  if (!access || !canManageTrip(access.role)) {
+  if (!access || !canInviteCollaborators(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -51,7 +51,7 @@ export async function POST(
   }
   const { tripId } = await params;
   const access = await getTripAccess(tripId, authUser.id);
-  if (!access || !canManageTrip(access.role)) {
+  if (!access || !canInviteCollaborators(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const body = await req.json().catch(() => null);
@@ -154,7 +154,7 @@ export async function DELETE(
   }
   const { tripId } = await params;
   const access = await getTripAccess(tripId, authUser.id);
-  if (!access || !canManageTrip(access.role)) {
+  if (!access || !canInviteCollaborators(access.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const body = await req.json().catch(() => null);

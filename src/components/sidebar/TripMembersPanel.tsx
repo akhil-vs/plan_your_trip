@@ -29,10 +29,13 @@ interface InviteCreateResponse extends InviteItem {
 
 interface TripMembersPanelProps {
   tripId: string;
+  /** Owner only: remove collaborators from the trip. */
   canManage: boolean;
+  /** Owner or editor: send and manage email invites. */
+  canInvite: boolean;
 }
 
-export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
+export function TripMembersPanel({ tripId, canManage, canInvite }: TripMembersPanelProps) {
   const [members, setMembers] = useState<MemberItem[]>([]);
   const [invites, setInvites] = useState<InviteItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,7 +70,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
   }, [load]);
 
   const inviteMember = async () => {
-    if (!canManage || !email.trim()) return;
+    if (!canInvite || !email.trim()) return;
     setError("");
     setNotice("");
     const res = await fetch(`/api/trips/${tripId}/invites`, {
@@ -101,7 +104,7 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
   };
 
   const revokeInvite = async (inviteId: string) => {
-    if (!canManage) return;
+    if (!canInvite) return;
     await fetch(`/api/trips/${tripId}/invites`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -165,82 +168,88 @@ export function TripMembersPanel({ tripId, canManage }: TripMembersPanelProps) {
         )}
       </div>
 
-      {canManage && (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Invite Collaborator
-          </p>
-          <Input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="email@example.com"
-            className="h-8 text-xs"
-          />
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-            <select
-              className="h-8 rounded-md border px-2 text-xs bg-background w-full sm:w-auto"
-              value={role}
-              onChange={(e) => setRole(e.target.value as MemberRole)}
-            >
-              <option value="EDITOR">Editor</option>
-              <option value="VIEWER">Viewer</option>
-            </select>
-            <Button size="sm" className="gap-1.5 w-full sm:w-auto" onClick={inviteMember}>
-              <UserPlus className="h-3.5 w-3.5" />
-              Send invite
-            </Button>
-          </div>
-          {error && <p className="text-[11px] text-red-500">{error}</p>}
-          {notice && <p className="text-[11px] text-emerald-600">{notice}</p>}
-        </div>
-      )}
-
-      <div className="space-y-1">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Pending Invites
-        </p>
-        {invites.filter((i) => i.status === "PENDING").length === 0 ? (
-          <p className="text-xs text-muted-foreground">No pending invites.</p>
-        ) : (
-          invites
-            .filter((invite) => invite.status === "PENDING")
-            .map((invite) => (
-              <div
-                key={invite.id}
-                className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded border px-2 py-2"
+      {canInvite ? (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Invite by email
+            </p>
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email@example.com"
+              className="h-8 text-xs"
+            />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <select
+                className="h-8 rounded-md border px-2 text-xs bg-background w-full sm:w-auto"
+                value={role}
+                onChange={(e) => setRole(e.target.value as MemberRole)}
               >
-                <p className="min-w-0 flex-1 basis-[min(100%,12rem)] break-all text-xs">
-                  {invite.email}
-                </p>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Badge variant="outline" className="text-[10px]">
-                    {invite.role}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => copyInviteLink(invite)}
-                    title="Copy invite link"
+                <option value="EDITOR">Editor</option>
+                <option value="VIEWER">Viewer</option>
+              </select>
+              <Button size="sm" className="gap-1.5 w-full sm:w-auto" onClick={inviteMember}>
+                <UserPlus className="h-3.5 w-3.5" />
+                Send invite
+              </Button>
+            </div>
+            {error && <p className="text-[11px] text-red-500">{error}</p>}
+            {notice && <p className="text-[11px] text-emerald-600">{notice}</p>}
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Pending invites
+            </p>
+            {invites.filter((i) => i.status === "PENDING").length === 0 ? (
+              <p className="text-xs text-muted-foreground">No pending invites.</p>
+            ) : (
+              invites
+                .filter((invite) => invite.status === "PENDING")
+                .map((invite) => (
+                  <div
+                    key={invite.id}
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded border px-2 py-2"
                   >
-                    <Link2 className="h-3.5 w-3.5" />
-                  </Button>
-                  {canManage && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-red-500"
-                      onClick={() => revokeInvite(invite.id)}
-                    >
-                      <UserX className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))
-        )}
-        {copiedInviteId && <p className="text-[11px] text-green-600">Invite link copied to clipboard.</p>}
-      </div>
+                    <p className="min-w-0 flex-1 basis-[min(100%,12rem)] break-all text-xs">
+                      {invite.email}
+                    </p>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Badge variant="outline" className="text-[10px]">
+                        {invite.role}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => copyInviteLink(invite)}
+                        title="Copy invite link"
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-red-500"
+                        onClick={() => revokeInvite(invite.id)}
+                        title="Revoke invite"
+                      >
+                        <UserX className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+            )}
+            {copiedInviteId ? (
+              <p className="text-[11px] text-green-600">Invite link copied to clipboard.</p>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          Viewers can&apos;t send invites. Ask an editor or the trip owner to add people by email.
+        </p>
+      )}
     </div>
   );
 }

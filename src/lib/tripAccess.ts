@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { canEditTrip, canManageTrip, canViewTrip, TripRole } from "./tripRoles";
+import {
+  canEditTrip,
+  canInviteCollaborators,
+  canManageTrip,
+  canViewTrip,
+  TripRole,
+} from "./tripRoles";
 
 export async function getTripAccess(tripId: string, userId: string) {
   const trip = await prisma.trip.findUnique({
@@ -20,4 +26,4 @@ export async function getTripAccess(tripId: string, userId: string) {
   if (!membership) return null;
   return { trip, role: membership.role as TripRole };
 }
-export { canViewTrip, canEditTrip, canManageTrip };
+export { canViewTrip, canEditTrip, canManageTrip, canInviteCollaborators };

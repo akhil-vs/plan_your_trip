@@ -8,23 +8,41 @@ import {
   Image,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { env } from "@/config/env";
 import { api } from "@/services/api";
 
 export default function CollaborationScreen() {
   const { tripId } = useLocalSearchParams<{ tripId: string }>();
-  const [memberEmail, setMemberEmail] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"EDITOR" | "VIEWER">("EDITOR");
+  const [sendingInvite, setSendingInvite] = useState(false);
   const [chatText, setChatText] = useState("");
   const [tab, setTab] = useState<"members" | "chat" | "activity">("members");
 
+  const tripQuery = useQuery({
+    queryKey: ["trip", tripId],
+    queryFn: () => api.trip(tripId!),
+    enabled: Boolean(tripId),
+  });
+  const currentRole = tripQuery.data?.currentUserRole as "OWNER" | "EDITOR" | "VIEWER" | undefined;
+  const canInvite = currentRole === "OWNER" || currentRole === "EDITOR";
+  const canRemoveMember = currentRole === "OWNER";
+
   const membersQuery = useQuery({
     queryKey: ["members", tripId],
-    queryFn: () => api.members(tripId),
+    queryFn: () => api.members(tripId!),
     enabled: Boolean(tripId),
+  });
+  const invitesQuery = useQuery({
+    queryKey: ["invites", tripId],
+    queryFn: () => api.invites(tripId!),
+    enabled: Boolean(tripId) && canInvite,
   });
   const chatQuery = useQuery({
     queryKey: ["chat", tripId],
@@ -110,35 +128,118 @@ export default function CollaborationScreen() {
 
       {tab === "members" ? (
         <>
-          <View style={styles.inviteCard}>
-            <Text style={styles.inviteLabel}>INVITE VIA EMAIL OR NAME</Text>
-            <View style={styles.row}>
+          {tripQuery.isLoading ? <Text style={styles.placeholder}>Loading trip access…</Text> : null}
+          {currentRole === "VIEWER" ? (
+            <Text style={styles.placeholder}>
+              Viewers can&apos;t send invites. Ask an editor or the trip owner to invite people by email.
+            </Text>
+          ) : null}
+          {canInvite ? (
+            <View style={styles.inviteCard}>
+              <Text style={styles.inviteLabel}>INVITE BY EMAIL</Text>
+              <Text style={styles.inviteHint}>
+                Sends the same email invite as the web app. They join via the link even if they don&apos;t have an
+                account yet.
+              </Text>
               <TextInput
-                style={styles.input}
-                value={memberEmail}
-                onChangeText={setMemberEmail}
+                style={styles.inputFull}
+                value={inviteEmail}
+                onChangeText={setInviteEmail}
                 autoCapitalize="none"
+                keyboardType="email-address"
                 placeholder="jane@example.com"
                 placeholderTextColor="#9ca3af"
               />
+              <View style={styles.roleRow}>
+                <Pressable
+                  style={[styles.roleChip, inviteRole === "EDITOR" && styles.roleChipActive]}
+                  onPress={() => setInviteRole("EDITOR")}
+                >
+                  <Text style={[styles.roleChipText, inviteRole === "EDITOR" && styles.roleChipTextActive]}>Editor</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.roleChip, inviteRole === "VIEWER" && styles.roleChipActive]}
+                  onPress={() => setInviteRole("VIEWER")}
+                >
+                  <Text style={[styles.roleChipText, inviteRole === "VIEWER" && styles.roleChipTextActive]}>Viewer</Text>
+                </Pressable>
+              </View>
               <Pressable
-                style={styles.btn}
+                style={[styles.btnFull, sendingInvite && styles.btnDisabled]}
+                disabled={sendingInvite}
                 onPress={async () => {
-                  if (!memberEmail.trim()) return;
+                  if (!inviteEmail.trim() || !tripId) return;
                   try {
-                    await api.addMember(tripId, memberEmail.trim(), "EDITOR");
-                    setMemberEmail("");
-                    await membersQuery.refetch();
+                    setSendingInvite(true);
+                    const res = await api.createInvite(tripId, inviteEmail.trim().toLowerCase(), inviteRole);
+                    setInviteEmail("");
+                    await invitesQuery.refetch();
+                    const msg = res.emailDelivered
+                      ? "Invite sent by email."
+                      : "Invite created. Share the link if email did not arrive.";
+                    Alert.alert("Invite sent", msg);
                   } catch (error) {
-                    Alert.alert("Add member failed", String(error));
+                    Alert.alert("Invite failed", error instanceof Error ? error.message : String(error));
+                  } finally {
+                    setSendingInvite(false);
                   }
                 }}
               >
-                <Text style={styles.btnText}>Add</Text>
+                <Text style={styles.btnText}>{sendingInvite ? "Sending…" : "Send invite"}</Text>
               </Pressable>
+              <Text style={styles.sectionTitle}>Pending invites</Text>
+              {invitesQuery.isLoading ? <Text style={styles.placeholder}>Loading invites…</Text> : null}
+              {invitesQuery.isError ? (
+                <Text style={styles.placeholder}>
+                  Couldn&apos;t load invites (Pro plan required for collaboration on this trip).
+                </Text>
+              ) : null}
+              {(invitesQuery.data ?? []).filter((i) => i.status === "PENDING").length === 0 &&
+              !invitesQuery.isLoading &&
+              !invitesQuery.isError ? (
+                <Text style={styles.placeholder}>No pending invites.</Text>
+              ) : null}
+              {(invitesQuery.data ?? [])
+                .filter((i) => i.status === "PENDING")
+                .map((inv) => (
+                  <View key={inv.id} style={styles.pendingInviteRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.itemText} numberOfLines={1}>
+                        {inv.email}
+                      </Text>
+                      <Text style={styles.memberStatus}>{inv.role}</Text>
+                    </View>
+                    <Pressable
+                      style={styles.secondaryPill}
+                      onPress={async () => {
+                        const link = `${env.apiBaseUrl}/invite/${inv.token}`;
+                        try {
+                          await Share.share({ message: link, title: "Trip invite" });
+                        } catch {
+                          Alert.alert("Invite link", link);
+                        }
+                      }}
+                    >
+                      <Text style={styles.secondaryPillText}>Share link</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.removePill}
+                      onPress={async () => {
+                        try {
+                          await api.revokeInvite(tripId!, inv.id);
+                          await invitesQuery.refetch();
+                        } catch (error) {
+                          Alert.alert("Revoke failed", error instanceof Error ? error.message : String(error));
+                        }
+                      }}
+                    >
+                      <Text style={styles.link}>Revoke</Text>
+                    </Pressable>
+                  </View>
+                ))}
             </View>
-          </View>
-          <Text style={styles.sectionTitle}>Team Members</Text>
+          ) : null}
+          <Text style={styles.sectionTitle}>Team members</Text>
           {membersQuery.isLoading ? <Text style={styles.placeholder}>Loading members…</Text> : null}
           {members.length === 0 && !membersQuery.isLoading ? (
             <Text style={styles.placeholder}>No members yet. Invite collaborators to plan together.</Text>
@@ -159,25 +260,25 @@ export default function CollaborationScreen() {
                   </Text>
                   <Text style={styles.memberStatus}>Active now</Text>
                 </View>
-                {item.role !== "OWNER" ? (
+                {canRemoveMember && item.role !== "OWNER" ? (
                   <Pressable
                     style={styles.removePill}
                     onPress={async () => {
                       try {
-                        await api.removeMember(tripId, item.user.id);
+                        await api.removeMember(tripId!, item.user.id);
                         await membersQuery.refetch();
                       } catch (error) {
-                        Alert.alert("Remove member failed", String(error));
+                        Alert.alert("Remove member failed", error instanceof Error ? error.message : String(error));
                       }
                     }}
                   >
                     <Text style={styles.link}>Remove</Text>
                   </Pressable>
-                ) : (
+                ) : item.role === "OWNER" ? (
                   <View style={styles.ownerPill}>
                     <Text style={styles.owner}>OWNER</Text>
                   </View>
-                )}
+                ) : null}
               </View>
             )}
           />
@@ -310,8 +411,49 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   inviteLabel: { color: "#9ca3af", fontSize: 13, fontWeight: "700", letterSpacing: 0.4 },
+  inviteHint: { color: "#6b7280", fontSize: 13, lineHeight: 18 },
   sectionTitle: { color: "#4b5563", fontSize: 31 / 2, fontWeight: "700", marginTop: 6 },
   row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  inputFull: {
+    borderWidth: 1,
+    borderColor: "#dbe1ea",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "#ffffff",
+    color: "#374151",
+    fontSize: 28 / 2,
+  },
+  roleRow: { flexDirection: "row", gap: 8 },
+  roleChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    alignItems: "center",
+    backgroundColor: "#f9fafb",
+  },
+  roleChipActive: { borderColor: "#2563eb", backgroundColor: "#eff6ff" },
+  roleChipText: { fontWeight: "600", color: "#4b5563", fontSize: 14 },
+  roleChipTextActive: { color: "#2563eb" },
+  btnFull: { backgroundColor: "#2563eb", borderRadius: 10, paddingVertical: 12, alignItems: "center" },
+  btnDisabled: { opacity: 0.6 },
+  pendingInviteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e7eb",
+  },
+  secondaryPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#eef2ff",
+  },
+  secondaryPillText: { color: "#4338ca", fontWeight: "700", fontSize: 12 },
   input: {
     flex: 1,
     borderWidth: 1,
