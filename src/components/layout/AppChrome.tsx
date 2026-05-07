@@ -1,18 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import {
   Archive,
   BookOpen,
   Compass,
+  LogOut,
   Menu,
   Plus,
   Route,
+  Shield,
+  User,
   Users2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sheet,
   SheetClose,
@@ -22,6 +33,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { useAdminAccess } from "@/contexts/AdminAccessContext";
 
 interface AppChromeProps {
   children: React.ReactNode;
@@ -38,6 +50,9 @@ const sidebarNavItems = [
 ];
 
 export function AppChrome({ children }: AppChromeProps) {
+  const router = useRouter();
+  const { data: session } = useSession();
+  const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const shouldApplyChrome = APP_ROUTES.some((route) => pathname.startsWith(route));
@@ -144,11 +159,49 @@ export function AppChrome({ children }: AppChromeProps) {
                     New itinerary
                   </Button>
                 </Link>
-                <button
-                  type="button"
-                  className="h-11 w-11 rounded-full border-4 border-cyan-100 bg-gradient-to-br from-cyan-500 to-teal-700"
-                  aria-label="Profile"
-                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-11 w-11 rounded-full p-0">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full border-4 border-cyan-100 bg-gradient-to-br from-cyan-500 to-teal-700">
+                        <User className="h-4 w-4 text-white" />
+                      </div>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" sideOffset={8} collisionPadding={12}>
+                    <div className="px-2 py-1.5">
+                      <p className="text-sm font-medium">{session?.user?.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {session?.user?.email}
+                      </p>
+                    </div>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => router.push("/profile")}>
+                      <User className="mr-2 h-4 w-4" />
+                      Profile & membership
+                    </DropdownMenuItem>
+                    {adminReady && isAdminUser && (
+                      <DropdownMenuItem onClick={() => router.push("/admin")}>
+                        <Shield className="mr-2 h-4 w-4" />
+                        Admin panel
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() =>
+                        signOut({
+                          callbackUrl:
+                            typeof window !== "undefined"
+                              ? `${window.location.origin}/`
+                              : "/",
+                        })
+                      }
+                      className="text-red-600"
+                    >
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Sign Out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </header>
