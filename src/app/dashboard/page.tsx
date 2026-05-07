@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession, signOut } from "next-auth/react";
-import { useAdminAccess } from "@/contexts/AdminAccessContext";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,24 +22,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
 import { TripCardHeaderImage } from "@/components/dashboard/TripCardHeaderImage";
-import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { toast } from "@/lib/toast";
 import {
   MapPin,
-  Plus,
   Route,
   Trash2,
   Clock,
   MoreVertical,
-  LogOut,
-  User,
   Share2,
   FileDown,
   Users2,
   Globe,
-  Shield,
 } from "lucide-react";
 
 function WhatsAppIcon({ className }: { className?: string }) {
@@ -94,10 +87,12 @@ interface TripTemplate {
   waypoints: { id: string; name: string; lat: number; lng: number; order: number }[];
 }
 
+type DashboardView = "itineraries" | "published" | "collaborators" | "shared" | "archive" | "explore";
+
 export default function DashboardPage() {
   const { data: session } = useSession();
-  const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [myTrips, setMyTrips] = useState<Trip[]>([]);
   const [publicTrips, setPublicTrips] = useState<Trip[]>([]);
   const [templates, setTemplates] = useState<TripTemplate[]>([]);
@@ -275,89 +270,83 @@ export default function DashboardPage() {
     });
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Navbar */}
-      <nav className="bg-white border-b sticky top-0 z-50" aria-label="Dashboard">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-14 py-2 sm:py-0 sm:h-16 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 sm:flex-nowrap">
-          <SiteLogoLink />
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="flex items-center gap-2">
-              <Link href="/dashboard/generate">
-                <Button size="sm" variant="outline" className="gap-1.5 min-h-9">
-                  <Route className="h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">Generate by destination</span>
-                  <span className="sm:hidden">Generate</span>
-                </Button>
-              </Link>
-              <Link href="/planner">
-                <Button size="sm" className="gap-1.5 min-h-9 min-w-9 sm:min-w-0">
-                  <Plus className="h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">New itinerary</span>
-                </Button>
-              </Link>
-            </div>
-            <NotificationBell className="rounded-full border border-transparent hover:border-slate-200 hover:bg-slate-50" />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="rounded-full">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                    <User className="h-4 w-4 text-blue-600" />
-                  </div>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" sideOffset={8} collisionPadding={12}>
-                <div className="px-2 py-1.5">
-                  <p className="text-sm font-medium">{session?.user?.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {session?.user?.email}
-                  </p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => router.push("/profile")}>
-                  <User className="h-4 w-4 mr-2" />
-                  Profile & membership
-                </DropdownMenuItem>
-                {adminReady && isAdminUser && (
-                  <DropdownMenuItem onClick={() => router.push("/admin")}>
-                    <Shield className="h-4 w-4 mr-2" />
-                    Admin panel
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() =>
-                    signOut({
-                      callbackUrl:
-                        typeof window !== "undefined"
-                          ? `${window.location.origin}/`
-                          : "/",
-                    })
-                  }
-                  className="text-red-600"
-                >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Sign Out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </nav>
+  const currentViewParam = searchParams.get("view");
+  const currentView: DashboardView = (
+    currentViewParam &&
+    ["itineraries", "published", "collaborators", "shared", "archive", "explore"].includes(
+      currentViewParam
+    )
+      ? currentViewParam
+      : "itineraries"
+  ) as DashboardView;
 
-      {/* Content */}
-      <main id="main" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  const showPlaceholderView = ["collaborators", "shared", "archive", "explore"].includes(currentView);
+
+  return (
+    <div className="px-4 py-8 sm:px-6 lg:px-8 xl:px-10">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Your Itineraries</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-slate-900">
+            {currentView === "published"
+              ? "Published Itineraries"
+              : currentView === "collaborators"
+                ? "Collaborators"
+                : currentView === "shared"
+                  ? "Shared Itineraries"
+                  : currentView === "archive"
+                    ? "Archive"
+                    : currentView === "explore"
+                      ? "Explore"
+                      : "Your Itineraries"}
+          </h1>
           <p className="text-muted-foreground mt-1">
-            Only itineraries you own or are invited to appear here—your private plans stay yours.
+            {currentView === "published"
+              ? "Browse itineraries that are visible to everyone."
+              : currentView === "collaborators"
+                ? "Manage people and permissions for group planning."
+                : currentView === "shared"
+                  ? "Trips shared with you will appear here."
+                  : currentView === "archive"
+                    ? "Archived trips can be restored whenever you need them."
+                    : currentView === "explore"
+                      ? "Discover inspiration to start your next itinerary."
+                      : "Only itineraries you own or are invited to appear here—your private plans stay yours."}
           </p>
         </div>
 
-        {templates.length > 0 && (
+        {showPlaceholderView && (
+          <Card className="mb-10">
+            <CardHeader>
+              <CardTitle>
+                {currentView === "collaborators"
+                  ? "Collaboration hub coming soon"
+                  : currentView === "shared"
+                    ? "Shared itinerary view coming soon"
+                    : currentView === "archive"
+                      ? "Archive view coming soon"
+                      : "Explore hub coming soon"}
+              </CardTitle>
+              <CardDescription>
+                {currentView === "collaborators"
+                  ? "You will see teammate roles, pending invites, and collaboration activity here."
+                  : currentView === "shared"
+                    ? "Itineraries that other travelers share with you will be organized in this section."
+                    : currentView === "archive"
+                      ? "Archived itineraries will live here, with quick restore actions."
+                      : "Destination inspiration and discovery tools will appear in this section."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link href="/dashboard?view=itineraries">
+                <Button size="sm">Back to My Trips</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+
+        {!showPlaceholderView && currentView === "itineraries" && templates.length > 0 && (
           <div className="mb-8">
             <h2 className="text-lg font-semibold text-gray-900 mb-3">Templates</h2>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
               {templates.map((template) => (
                 <Card key={template.id} className="border-dashed">
                   <CardHeader className="pb-2">
@@ -388,7 +377,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {loading ? (
+        {!showPlaceholderView && currentView === "itineraries" && (loading ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(3)].map((_, i) => (
               <Skeleton key={i} className="h-48 rounded-xl" />
@@ -430,7 +419,7 @@ export default function DashboardPage() {
             )}
           </div>
         ) : (
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6 mb-10">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-6 mb-10">
             {myTrips.map((trip) => (
               <Card
                 key={trip.id}
@@ -568,10 +557,10 @@ export default function DashboardPage() {
               </Card>
             ))}
           </div>
-        )}
+        ))}
 
-        {!loading && (
-          <div>
+        {!showPlaceholderView && !loading && (currentView === "itineraries" || currentView === "published") && (
+          <div className="border-t pt-8">
             <div className="mb-3">
               <h2 className="text-lg font-semibold text-gray-900">Published itineraries</h2>
               <p className="text-sm text-muted-foreground">
@@ -583,7 +572,7 @@ export default function DashboardPage() {
                 No other published itineraries yet. Publish a trip (make it public) to share it with everyone.
               </p>
             ) : (
-              <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
+              <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-6">
                 {publicTrips.map((trip) => (
                   <Card
                     key={trip.id}
@@ -628,8 +617,6 @@ export default function DashboardPage() {
             )}
           </div>
         )}
-      </main>
-
-    </div>
+          </div>
   );
 }

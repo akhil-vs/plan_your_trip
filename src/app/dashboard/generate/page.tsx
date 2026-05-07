@@ -1,12 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, MapPin, Sparkles } from "lucide-react";
+import {
+  ChevronRight,
+  Loader2,
+  MapPin,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { searchLocations, type SearchResult } from "@/lib/api/mapbox";
 import { toast } from "@/lib/toast";
 
@@ -77,6 +82,10 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
   const sinDLng = Math.sin(dLng / 2);
   const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
   return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function destinationPreviewImage(name: string) {
+  return `https://picsum.photos/seed/${encodeURIComponent(name)}/800/500`;
 }
 
 export default function GenerateTripPage() {
@@ -240,236 +249,296 @@ export default function GenerateTripPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="max-w-3xl mx-auto px-4 py-8">
-        <Link href="/dashboard" className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900 mb-4">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to dashboard
-        </Link>
-
-        <div className="rounded-xl border bg-white p-5 sm:p-6 shadow-sm">
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-blue-600" />
-            Generate by destination
+    <div className="px-4 py-8 sm:px-6 lg:px-8 xl:px-10">
+      <div className="mx-auto max-w-6xl">
+        <section>
+          <h1 className="flex items-center gap-2 text-5xl font-bold tracking-tight text-slate-900">
+            <Sparkles className="h-8 w-8 text-amber-500" />
+            Generate itinerary
           </h1>
-          <p className="text-sm text-slate-600 mt-1">
-            Pick a destination and trip length. We create a realistic, day-wise plan using map-based places.
+          <p className="mt-3 max-w-3xl text-2xl leading-relaxed text-slate-700">
+            Let our digital concierge curate an effortless travel experience. Define your preferences
+            and watch your luxury itinerary unfold.
           </p>
 
-          <div className="mt-5 space-y-3">
-            <Label htmlFor="destination-search">Destination</Label>
-            <Input
-              id="destination-search"
-              placeholder="Search city or place name"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setDestination(null);
-                setHasManualSwaps(false);
-              }}
-              className="min-h-11"
-            />
-            {suggesting && <p className="text-xs text-slate-500">Searching places...</p>}
-            {results.length > 0 && (
-              <div className="rounded-md border bg-white overflow-hidden">
-                {results.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => {
-                      setDestination({
-                        mapboxId: r.id,
-                        name: r.name,
-                        country: "",
-                        lat: r.lat ?? 0,
-                        lng: r.lng ?? 0,
-                      });
-                      setQuery(r.name);
-                      setResults([]);
-                      setSelectedStops([]);
-                      setAlternativeStops([]);
-                      setHasManualSwaps(false);
-                    }}
-                    className="w-full text-left px-3 py-2.5 hover:bg-slate-50 text-sm flex items-center gap-2"
-                  >
-                    <MapPin className="h-4 w-4 text-blue-600" />
-                    <span className="min-w-0">
-                      <span className="block truncate">{r.name}</span>
-                      {r.fullName && r.fullName !== r.name ? (
-                        <span className="block truncate text-xs text-slate-500">{r.fullName}</span>
-                      ) : null}
-                    </span>
-                  </button>
-                ))}
+          <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="grid gap-4 lg:grid-cols-12">
+              <div className="lg:col-span-5">
+                <Label
+                  htmlFor="destination-search"
+                  className="text-xs font-semibold uppercase tracking-wider text-slate-700"
+                >
+                  Destination
+                </Label>
+                <Input
+                  id="destination-search"
+                  placeholder="Where do you want to go?"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setDestination(null);
+                    setHasManualSwaps(false);
+                  }}
+                  className="mt-2 min-h-14 rounded-xl border-slate-300 px-4 text-lg"
+                />
               </div>
-            )}
+              <div className="lg:col-span-2">
+                <Label
+                  htmlFor="days"
+                  className="text-xs font-semibold uppercase tracking-wider text-slate-700"
+                >
+                  Duration (days)
+                </Label>
+                <Input
+                  id="days"
+                  type="number"
+                  min={1}
+                  max={14}
+                  value={days}
+                  onChange={(e) => {
+                    setDays(e.target.value);
+                    setHasManualSwaps(false);
+                  }}
+                  className="mt-2 min-h-14 rounded-xl border-slate-300 px-4 text-lg"
+                />
+              </div>
+              <div className="lg:col-span-3">
+                <Label
+                  htmlFor="pace"
+                  className="text-xs font-semibold uppercase tracking-wider text-slate-700"
+                >
+                  Travel pace
+                </Label>
+                <select
+                  id="pace"
+                  value={pace}
+                  onChange={(e) => {
+                    setPace(e.target.value as Pace);
+                    setHasManualSwaps(false);
+                  }}
+                  className="mt-2 flex h-14 w-full rounded-xl border border-slate-300 bg-white px-4 text-lg"
+                >
+                  <option value="relaxed">Balanced Discovery</option>
+                  <option value="moderate">Moderate Explorer</option>
+                  <option value="packed">Packed Adventure</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <Label className="mb-3 block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                Ranking style
+              </Label>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  type="button"
+                  variant={rankingStyle === "most_popular" ? "default" : "outline"}
+                  className={cn(
+                    "h-12 rounded-xl px-6 text-base",
+                    rankingStyle === "most_popular" && "bg-[#031a45] text-white hover:bg-[#05235b]"
+                  )}
+                  onClick={() => {
+                    setRankingStyle("most_popular");
+                    setHasManualSwaps(false);
+                  }}
+                >
+                  Most popular
+                </Button>
+                <Button
+                  type="button"
+                  variant={rankingStyle === "best_spread" ? "default" : "outline"}
+                  className="h-12 rounded-xl px-6 text-base"
+                  onClick={() => {
+                    setRankingStyle("best_spread");
+                    setHasManualSwaps(false);
+                  }}
+                >
+                  Best spread
+                </Button>
+                <Button
+                  type="button"
+                  variant={rankingStyle === "hidden_gems" ? "default" : "outline"}
+                  className="h-12 rounded-xl px-6 text-base"
+                  onClick={() => {
+                    setRankingStyle("hidden_gems");
+                    setHasManualSwaps(false);
+                  }}
+                >
+                  Hidden gems
+                </Button>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5">
-            <div>
-              <Label htmlFor="days">Days</Label>
-              <Input
-                id="days"
-                type="number"
-                min={1}
-                max={14}
-                value={days}
-                onChange={(e) => {
-                  setDays(e.target.value);
-                  setHasManualSwaps(false);
-                }}
-                className="min-h-11 mt-1"
-              />
-            </div>
-            <div>
-              <Label htmlFor="pace">Pace</Label>
-              <select
-                id="pace"
-                value={pace}
-                onChange={(e) => {
-                  setPace(e.target.value as Pace);
-                  setHasManualSwaps(false);
-                }}
-                className="mt-1 flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="relaxed">Relaxed (~3 stops/day)</option>
-                <option value="moderate">Moderate (~4 stops/day)</option>
-                <option value="packed">Packed (~6 stops/day)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <Label className="mb-2 block">Ranking style</Label>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant={rankingStyle === "most_popular" ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  setRankingStyle("most_popular");
-                  setHasManualSwaps(false);
-                }}
-              >
-                Most popular
-              </Button>
-              <Button
-                type="button"
-                variant={rankingStyle === "best_spread" ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  setRankingStyle("best_spread");
-                  setHasManualSwaps(false);
-                }}
-              >
-                Best spread
-              </Button>
-              <Button
-                type="button"
-                variant={rankingStyle === "hidden_gems" ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  setRankingStyle("hidden_gems");
-                  setHasManualSwaps(false);
-                }}
-              >
-                Hidden gems
-              </Button>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <h2 className="text-sm font-semibold text-slate-800 mb-2">
-              Popular destinations near you
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {popularByLocation.map((d) => (
+          {suggesting && <p className="mt-3 text-xs text-slate-500">Searching places...</p>}
+          {results.length > 0 && (
+            <div className="mt-3 overflow-hidden rounded-xl border bg-white">
+              {results.map((r) => (
                 <button
-                  key={`${d.name}-${d.country}`}
+                  key={r.id}
                   type="button"
                   onClick={() => {
-                    setDestination(d);
-                    setQuery(d.name);
+                    setDestination({
+                      mapboxId: r.id,
+                      name: r.name,
+                      country: "",
+                      lat: r.lat ?? 0,
+                      lng: r.lng ?? 0,
+                    });
+                    setQuery(r.name);
                     setResults([]);
                     setSelectedStops([]);
                     setAlternativeStops([]);
                     setHasManualSwaps(false);
                   }}
-                  className="text-left rounded-lg border px-3 py-2 hover:bg-blue-50 hover:border-blue-200"
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50"
                 >
-                  <p className="text-sm font-medium text-slate-900">{d.name}</p>
-                  <p className="text-xs text-slate-500">{d.country}</p>
+                  <MapPin className="h-4 w-4 text-blue-600" />
+                  <span className="min-w-0">
+                    <span className="block truncate">{r.name}</span>
+                    {r.fullName && r.fullName !== r.name ? (
+                      <span className="block truncate text-xs text-slate-500">{r.fullName}</span>
+                    ) : null}
+                  </span>
                 </button>
               ))}
             </div>
-          </div>
+          )}
 
-          <div className="mt-6">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-slate-800">Area coverage suggestions</h2>
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadAreaSuggestions()} disabled={loadingPreview}>
-                {loadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
-              </Button>
-            </div>
-            <p className="text-xs text-slate-500 mb-3">
-              Selected points are used for the trip. Swap with alternatives to customize.
-            </p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div className="rounded-lg border p-3">
-                <p className="text-xs font-semibold text-slate-700 mb-2">Selected points</p>
-                <div className="space-y-1.5 max-h-52 overflow-auto">
-                      {selectedStops.map((s, idx) => (
-                    <button
-                      key={`${s.name}-${s.lat}-${s.lng}`}
-                      type="button"
-                      onClick={() => setSelectedIndex(idx)}
-                      className={`w-full text-left rounded-md border px-2.5 py-2 text-sm ${
-                        idx === selectedIndex ? "border-blue-500 bg-blue-50" : "border-slate-200"
-                      }`}
-                    >
-                          <div className="truncate">{s.name}</div>
-                          <div className="text-xs text-slate-500 mt-0.5 truncate">
-                            {typeof s.popularityScore === "number" ? `Popularity ${s.popularityScore.toFixed(1)}` : "Popularity n/a"}
-                            {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
-                          </div>
-                    </button>
-                  ))}
-                  {selectedStops.length === 0 && <p className="text-xs text-slate-500">Pick destination to load.</p>}
-                </div>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs font-semibold text-slate-700 mb-2">Popular alternatives in this area</p>
-                <div className="space-y-1.5 max-h-52 overflow-auto">
-                  {alternativeStops.map((s, idx) => (
-                    <div key={`${s.name}-${s.lat}-${s.lng}`} className="rounded-md border border-slate-200 px-2.5 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm text-slate-800 truncate">{s.name}</p>
-                          <p className="text-xs text-slate-500 truncate">
-                            {typeof s.popularityScore === "number" ? `Popularity ${s.popularityScore.toFixed(1)}` : "Popularity n/a"}
-                            {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
-                          </p>
-                        </div>
-                        <Button type="button" variant="outline" size="sm" onClick={() => swapWithAlternative(idx)}>
-                          Swap
-                        </Button>
-                      </div>
+          <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-base font-semibold text-slate-800">Area coverage suggestions</h2>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void loadAreaSuggestions()}
+              disabled={loadingPreview}
+            >
+              {loadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
+            </Button>
+          </div>
+          <p className="mb-3 text-xs text-slate-500">
+            Selected points are used for the trip. Swap with alternatives to customize.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border p-3">
+              <p className="mb-2 text-xs font-semibold text-slate-700">Selected points</p>
+              <div className="max-h-52 space-y-1.5 overflow-auto">
+                {selectedStops.map((s, idx) => (
+                  <button
+                    key={`${s.name}-${s.lat}-${s.lng}`}
+                    type="button"
+                    onClick={() => setSelectedIndex(idx)}
+                    className={`w-full rounded-md border px-2.5 py-2 text-left text-sm ${
+                      idx === selectedIndex ? "border-blue-500 bg-blue-50" : "border-slate-200"
+                    }`}
+                  >
+                    <div className="truncate">{s.name}</div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500">
+                      {typeof s.popularityScore === "number"
+                        ? `Popularity ${s.popularityScore.toFixed(1)}`
+                        : "Popularity n/a"}
+                      {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
                     </div>
-                  ))}
-                  {alternativeStops.length === 0 && <p className="text-xs text-slate-500">No alternatives loaded yet.</p>}
-                </div>
+                  </button>
+                ))}
+                {selectedStops.length === 0 && (
+                  <p className="text-xs text-slate-500">Pick destination to load.</p>
+                )}
+              </div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="mb-2 text-xs font-semibold text-slate-700">
+                Popular alternatives in this area
+              </p>
+              <div className="max-h-52 space-y-1.5 overflow-auto">
+                {alternativeStops.map((s, idx) => (
+                  <div
+                    key={`${s.name}-${s.lat}-${s.lng}`}
+                    className="rounded-md border border-slate-200 px-2.5 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-slate-800">{s.name}</p>
+                        <p className="truncate text-xs text-slate-500">
+                          {typeof s.popularityScore === "number"
+                            ? `Popularity ${s.popularityScore.toFixed(1)}`
+                            : "Popularity n/a"}
+                          {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
+                        </p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => swapWithAlternative(idx)}>
+                        Swap
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {alternativeStops.length === 0 && (
+                  <p className="text-xs text-slate-500">No alternatives loaded yet.</p>
+                )}
               </div>
             </div>
           </div>
+          </div>
 
-          <div className="mt-6 flex justify-end">
-            <Button onClick={() => void handleGenerate()} disabled={loading}>
-              {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          <div className="mt-7 flex justify-end">
+            <Button
+              onClick={() => void handleGenerate()}
+              disabled={loading}
+              className="h-14 rounded-full bg-[#031a45] px-10 text-xl font-semibold text-white hover:bg-[#05235b]"
+            >
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Generate itinerary
             </Button>
           </div>
-        </div>
+        </section>
+
+        <section className="mt-12">
+          <div className="mb-5 flex items-end justify-between">
+            <div>
+              <h2 className="text-4xl font-bold tracking-tight text-slate-900">Popular destinations</h2>
+              <p className="mt-1 text-lg text-slate-600">
+                Recommended cities near your current location or frequent searches.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="hidden items-center gap-1 text-sm font-semibold text-slate-700 md:flex"
+            >
+              View all
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {popularByLocation.map((d) => (
+              <button
+                key={`${d.name}-${d.country}`}
+                type="button"
+                onClick={() => {
+                  setDestination(d);
+                  setQuery(d.name);
+                  setResults([]);
+                  setSelectedStops([]);
+                  setAlternativeStops([]);
+                  setHasManualSwaps(false);
+                }}
+                className="overflow-hidden rounded-2xl border bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <img
+                  src={destinationPreviewImage(d.name)}
+                  alt={`${d.name} preview`}
+                  className="h-32 w-full object-cover"
+                />
+                <div className="p-3">
+                  <p className="text-xl font-semibold text-slate-900">{d.name}</p>
+                  <p className="text-sm text-slate-500">{d.country}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
-    </main>
+    </div>
   );
 }

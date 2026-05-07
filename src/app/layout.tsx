@@ -6,6 +6,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { AppChrome } from "@/components/layout/AppChrome";
 import "./globals.css";
 
 export const viewport: Viewport = {
@@ -75,7 +76,7 @@ export default function RootLayout({
         <SessionProvider>
           <AdminAccessProvider>
             <TooltipProvider>
-              {children}
+              <AppChrome>{children}</AppChrome>
               <Toaster />
             </TooltipProvider>
           </AdminAccessProvider>
