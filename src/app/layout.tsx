@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans, Inter, Geist_Mono, Caveat } from "next/font/google";
+import { Suspense } from "react";
 import { SessionProvider } from "next-auth/react";
 import { AdminAccessProvider } from "@/contexts/AdminAccessContext";
 import { Analytics } from "@vercel/analytics/next";
@@ -76,7 +77,9 @@ export default function RootLayout({
         <SessionProvider>
           <AdminAccessProvider>
             <TooltipProvider>
-              <AppChrome>{children}</AppChrome>
+              <Suspense fallback={children}>
+                <AppChrome>{children}</AppChrome>
+              </Suspense>
               <Toaster />
             </TooltipProvider>
           </AdminAccessProvider>

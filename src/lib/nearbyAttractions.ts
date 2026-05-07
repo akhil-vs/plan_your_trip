@@ -145,8 +145,8 @@ export async function fetchAttractionsAroundDestination(
       const rows = 4;
       for (let r = 0; r < rows; r += 1) {
         for (let c = 0; c < cols; c += 1) {
-          const tLat = rows === 1 ? 0.5 : r / (rows - 1);
-          const tLng = cols === 1 ? 0.5 : c / (cols - 1);
+          const tLat = r / (rows - 1);
+          const tLng = c / (cols - 1);
           seeds.push({
             lat: minLat + height * tLat,
             lng: minLng + width * tLng,

@@ -209,7 +209,10 @@ async function fetchMapboxSuggest(
     );
   const deduped: Array<SearchSuggestionResult & { _score: number }> = [];
   const seen = new Set<string>();
-  for (const s of suggestions.sort((a, b) => b._score - a._score)) {
+  for (const s of suggestions.sort(
+    (a: SearchSuggestionResult & { _score: number }, b: SearchSuggestionResult & { _score: number }) =>
+      b._score - a._score
+  )) {
     const key = normalizeText(`${s.name}|${s.fullName}`);
     if (seen.has(key)) continue;
     seen.add(key);
