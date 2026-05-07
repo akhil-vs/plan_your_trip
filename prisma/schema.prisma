@@ -75,6 +75,8 @@ model Trip {
   id                         String       @id @default(cuid())
   name                       String
   description                String?
+  /// Optional structured copy from hybrid itinerary generator (day titles, summaries, meals).
+  aiPlanMeta                 Json?
   status                     TripStatus   @default(DRAFT)
   isPublic                   Boolean      @default(false)
   shareId                    String       @unique @default(cuid())

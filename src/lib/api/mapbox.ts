@@ -4,6 +4,7 @@ export interface SearchResult {
   id: string;
   name: string;
   fullName: string;
+  featureType?: string;
   lat?: number;
   lng?: number;
 }
@@ -45,7 +46,7 @@ export async function searchLocations(
 
   const params = new URLSearchParams({
     q: query,
-    limit: "8",
+    limit: "6",
     language: "en",
     session_token: searchSessionToken,
     ...(proximity && {

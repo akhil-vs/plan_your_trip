@@ -2053,7 +2053,13 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
               Route stops
             </h3>
-            <WaypointList disabled={!canEditTrip} />
+            <WaypointList
+              disabled={!canEditTrip}
+              onWaypointReplaced={() => {
+                if (!canEditTrip || optimizing || waypoints.length < 3) return;
+                void handleOptimize();
+              }}
+            />
             {waypoints.length === 0 && (
               <div className="rounded-md border border-dashed p-3 mt-3">
                 <p className="text-xs font-medium">No stops yet</p>

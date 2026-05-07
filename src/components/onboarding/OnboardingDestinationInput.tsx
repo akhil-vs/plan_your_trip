@@ -49,7 +49,14 @@ export function OnboardingDestinationInput({
       setLoading(true);
       try {
         const data = await searchLocations(q);
-        setResults(data);
+        const filtered = data.filter((row) => {
+          const lower = row.name.toLowerCase();
+          if (/\d/.test(lower) && /(street|road|avenue|lane|highway|boulevard|drive)\b/.test(lower)) {
+            return false;
+          }
+          return true;
+        });
+        setResults(filtered);
         setOpen(true);
       } catch {
         setResults([]);
@@ -134,7 +141,9 @@ export function OnboardingDestinationInput({
                 <MapPin className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{r.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{r.fullName}</p>
+                  {r.fullName && r.fullName !== r.name ? (
+                    <p className="text-xs text-muted-foreground truncate">{r.fullName}</p>
+                  ) : null}
                 </div>
               </button>
             ))

@@ -282,12 +282,21 @@ export default function DashboardPage() {
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 min-h-14 py-2 sm:py-0 sm:h-16 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 sm:flex-nowrap">
           <SiteLogoLink />
           <div className="flex items-center gap-2 sm:gap-3">
-            <Link href="/planner">
-              <Button size="sm" className="gap-1.5 min-h-9 min-w-9 sm:min-w-0">
-                <Plus className="h-4 w-4 shrink-0" />
-                <span className="hidden sm:inline">New itinerary</span>
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link href="/dashboard/generate">
+                <Button size="sm" variant="outline" className="gap-1.5 min-h-9">
+                  <Route className="h-4 w-4 shrink-0" />
+                  <span className="hidden sm:inline">Generate by destination</span>
+                  <span className="sm:hidden">Generate</span>
+                </Button>
+              </Link>
+              <Link href="/planner">
+                <Button size="sm" className="gap-1.5 min-h-9 min-w-9 sm:min-w-0">
+                  <Plus className="h-4 w-4 shrink-0" />
+                  <span className="hidden sm:inline">New itinerary</span>
+                </Button>
+              </Link>
+            </div>
             <NotificationBell className="rounded-full border border-transparent hover:border-slate-200 hover:bg-slate-50" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

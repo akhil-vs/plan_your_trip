@@ -34,6 +34,8 @@ export type Trip = {
   id: string;
   name: string;
   description?: string | null;
+  /** Structured AI copy from hybrid generator when present */
+  aiPlanMeta?: unknown;
   status?: string;
   isPublic?: boolean;
   updatedAt?: string;

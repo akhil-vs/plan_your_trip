@@ -370,6 +370,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  generateTripFromDestination: (input: {
+    destination?: string;
+    mapboxId?: string;
+    days: number;
+    pace?: string;
+    interests?: string[];
+  }) =>
+    request<{ trip: Trip; narrative?: unknown; resolvedDestination?: unknown }>(
+      "/api/trips/generate-from-destination",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      }
+    ),
   updateTrip: (tripId: string, input: Record<string, unknown>) =>
     request<Trip>(`/api/trips/${tripId}`, {
       method: "PUT",

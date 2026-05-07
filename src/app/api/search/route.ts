@@ -21,11 +21,81 @@ interface SearchSuggestionResult {
   id: string;
   name: string;
   fullName: string;
+  featureType?: string;
 }
 
 interface RetrievedLocationResult extends SearchSuggestionResult {
   lng: number;
   lat: number;
+}
+
+type CountryHint = {
+  countryName: string;
+  countryCode?: string;
+};
+
+const countryHintCache = new Map<string, { expiresAt: number; value: CountryHint | null }>();
+const COUNTRY_HINT_TTL_MS = 6 * 60 * 60 * 1000;
+
+function normalizeText(v: string): string {
+  return v.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function parseProximity(proximity: string | null): { lng: number; lat: number } | null {
+  if (!proximity) return null;
+  const [lngRaw, latRaw] = proximity.split(",");
+  const lng = Number(lngRaw);
+  const lat = Number(latRaw);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  return { lng, lat };
+}
+
+async function getCountryHintFromProximity(
+  proximity: string | null,
+  token: string,
+  language: string
+): Promise<CountryHint | null> {
+  const parsed = parseProximity(proximity);
+  if (!parsed) return null;
+  const proxKey = `${Math.round(parsed.lng * 100) / 100},${Math.round(parsed.lat * 100) / 100},${language.toLowerCase()}`;
+  const cached = countryHintCache.get(proxKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+  try {
+    const params = new URLSearchParams({
+      access_token: token,
+      language,
+      limit: "1",
+      types: "country",
+    });
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${parsed.lng},${parsed.lat}.json?${params.toString()}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      countryHintCache.set(proxKey, { value: null, expiresAt: Date.now() + COUNTRY_HINT_TTL_MS });
+      return null;
+    }
+    const data = await res.json().catch(() => null);
+    const feature = Array.isArray(data?.features) ? data.features[0] : null;
+    const rawText = typeof feature?.text === "string" ? feature.text : "";
+    const shortCode =
+      typeof feature?.properties?.short_code === "string"
+        ? String(feature.properties.short_code).split("-")[0]
+        : undefined;
+    if (!rawText) {
+      countryHintCache.set(proxKey, { value: null, expiresAt: Date.now() + COUNTRY_HINT_TTL_MS });
+      return null;
+    }
+    const value: CountryHint = {
+      countryName: rawText.trim(),
+      countryCode: shortCode?.trim().toLowerCase() || undefined,
+    };
+    countryHintCache.set(proxKey, { value, expiresAt: Date.now() + COUNTRY_HINT_TTL_MS });
+    return value;
+  } catch {
+    countryHintCache.set(proxKey, { value: null, expiresAt: Date.now() + COUNTRY_HINT_TTL_MS });
+    return null;
+  }
 }
 
 async function fetchMapboxSuggest(
@@ -36,12 +106,43 @@ async function fetchMapboxSuggest(
   token: string,
   sessionToken: string
 ) {
+  const allowedFeatureTypes = new Set([
+    "country",
+    "region",
+    "district",
+    "place",
+    "locality",
+    "neighborhood",
+  ]);
+  const roadLike = /\b(street|st|road|rd|avenue|ave|lane|ln|highway|hwy|boulevard|blvd|drive|dr)\b/i;
+  const featureWeight = (t?: string) => {
+    switch ((t || "").toLowerCase()) {
+      case "place":
+      case "locality":
+        return 80;
+      case "region":
+      case "country":
+        return 72;
+      case "district":
+        return 62;
+      case "neighborhood":
+        return 50;
+      default:
+        return 30;
+    }
+  };
+  const qNorm = normalizeText(q);
+  const qTokens = qNorm.split(" ").filter(Boolean);
+  const countryHint = await getCountryHintFromProximity(proximity, token, language);
+  const countryNorm = countryHint ? normalizeText(countryHint.countryName) : "";
   const params = new URLSearchParams({
     q,
     access_token: token,
     session_token: sessionToken,
     limit,
     language,
+    // Prefer destination-like geographies over business POIs/addresses.
+    types: "country,region,district,place,locality,neighborhood,postcode",
   });
   if (proximity) params.set("proximity", proximity);
 
@@ -56,21 +157,66 @@ async function fetchMapboxSuggest(
 
   const data = await res.json();
   const suggestions = (data.suggestions || [])
-    .filter((s: { mapbox_id?: string }) => s.mapbox_id)
-    .slice(0, Number(limit))
+    .filter(
+      (s: { mapbox_id?: string; feature_type?: string; name?: string }) =>
+        s.mapbox_id &&
+        typeof s.feature_type === "string" &&
+        allowedFeatureTypes.has(s.feature_type) &&
+        typeof s.name === "string" &&
+        s.name.trim().length > 0
+    )
     .map(
       (s: {
         mapbox_id: string;
         name: string;
         full_address?: string;
         place_formatted?: string;
-      }): SearchSuggestionResult => ({
-        id: s.mapbox_id,
-        name: s.name,
-        fullName: s.full_address || s.place_formatted || s.name,
-      })
+        feature_type?: string;
+      }) => {
+        const name = s.name.trim();
+        const fullName = (s.full_address || s.place_formatted || s.name).trim();
+        const nameNorm = normalizeText(name);
+        const fullNorm = normalizeText(fullName);
+
+        let score = featureWeight(s.feature_type);
+        if (nameNorm === qNorm) score += 70;
+        if (nameNorm.startsWith(qNorm)) score += 45;
+        if (fullNorm.startsWith(qNorm)) score += 24;
+        const tokenMatches = qTokens.filter((t) => nameNorm.includes(t)).length;
+        score += tokenMatches * 8;
+        if (/\d/.test(name) || roadLike.test(name)) score -= 30;
+        if (countryNorm && (fullNorm.includes(countryNorm) || nameNorm.includes(countryNorm))) {
+          score += 36;
+        } else if (countryNorm && fullNorm.length > 0) {
+          score -= 8;
+        }
+        if (
+          countryHint?.countryCode &&
+          (fullNorm.includes(` ${countryHint.countryCode} `) ||
+            fullNorm.endsWith(` ${countryHint.countryCode}`))
+        ) {
+          score += 12;
+        }
+
+        return {
+          id: s.mapbox_id,
+          name,
+          fullName,
+          featureType: s.feature_type,
+          _score: score,
+        } as SearchSuggestionResult & { _score: number };
+      }
     );
-  return suggestions;
+  const deduped: Array<SearchSuggestionResult & { _score: number }> = [];
+  const seen = new Set<string>();
+  for (const s of suggestions.sort((a, b) => b._score - a._score)) {
+    const key = normalizeText(`${s.name}|${s.fullName}`);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(s);
+    if (deduped.length >= Number(limit)) break;
+  }
+  return deduped.map(({ _score, ...item }) => item);
 }
 
 async function fetchMapboxRetrieve(

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   closestCenter,
@@ -18,7 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useTripStore, WaypointData } from "@/stores/tripStore";
 import { useMapStore } from "@/stores/mapStore";
-import { GripVertical, MapPin, Pencil, Trash2 } from "lucide-react";
+import { GripVertical, Loader2, MapPin, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -28,15 +29,138 @@ import {
 } from "@/components/ui/tooltip";
 import { toast } from "@/lib/toast";
 import { placeNameForActivity } from "@/lib/placeDisplayName";
+import {
+  searchLocations,
+  type SearchResult,
+  retrieveLocationById,
+  resetSearchSession,
+} from "@/lib/api/mapbox";
+
+function ReplaceWaypointControl({
+  wp,
+  disabled,
+  onReplaced,
+}: {
+  wp: WaypointData;
+  disabled: boolean;
+  onReplaced?: () => void;
+}) {
+  const updateWaypoint = useTripStore((s) => s.updateWaypoint);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<NodeJS.Timeout>(undefined);
+
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+  }, []);
+
+  const doSearch = async (q: string) => {
+    if (disabled) return;
+    if (q.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await searchLocations(q, { lng: wp.lng, lat: wp.lat });
+      setResults(rows.slice(0, 6));
+    } catch {
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const replaceWith = async (row: SearchResult) => {
+    let selected = row;
+    if (selected.lat === undefined || selected.lng === undefined) {
+      setLoading(true);
+      const resolved = await retrieveLocationById(row.id);
+      setLoading(false);
+      if (!resolved || resolved.lat === undefined || resolved.lng === undefined) return;
+      selected = resolved;
+    }
+    updateWaypoint(wp.id, {
+      name: selected.name,
+      lat: selected.lat,
+      lng: selected.lng,
+    });
+    setOpen(false);
+    setQuery("");
+    setResults([]);
+    resetSearchSession();
+    toast.success(`Replaced stop with ${selected.name}`);
+    onReplaced?.();
+  };
+
+  return (
+    <div className="mt-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={disabled}
+        onClick={() => {
+          setOpen((v) => !v);
+          setResults([]);
+          setQuery("");
+        }}
+        className="h-7 px-2 text-[11px]"
+      >
+        <RefreshCw className="mr-1 h-3 w-3" />
+        Replace
+      </Button>
+      {open && (
+        <div className="mt-2 rounded-md border bg-white p-2">
+          <div className="relative">
+            <Input
+              value={query}
+              onChange={(e) => {
+                const next = e.target.value;
+                setQuery(next);
+                if (debounceRef.current) clearTimeout(debounceRef.current);
+                debounceRef.current = setTimeout(() => {
+                  void doSearch(next);
+                }, 300);
+              }}
+              placeholder="Search replacement stop..."
+              className="h-8 text-xs"
+            />
+            {loading && <Loader2 className="absolute right-2 top-2 h-3.5 w-3.5 animate-spin text-slate-400" />}
+          </div>
+          {results.length > 0 && (
+            <div className="mt-2 max-h-36 overflow-y-auto rounded border">
+              {results.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="block w-full border-b px-2 py-1.5 text-left text-xs last:border-b-0 hover:bg-slate-50"
+                  onClick={() => void replaceWith(r)}
+                >
+                  <div className="truncate font-medium text-slate-900">{r.name}</div>
+                  <div className="truncate text-slate-500">{r.fullName}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SortableWaypoint({
   wp,
   index,
   disabled,
+  onWaypointReplaced,
 }: {
   wp: WaypointData;
   index: number;
   disabled: boolean;
+  onWaypointReplaced?: () => void;
 }) {
   const removeWaypoint = useTripStore((s) => s.removeWaypoint);
   const reorderWaypoints = useTripStore((s) => s.reorderWaypoints);
@@ -141,11 +265,18 @@ function SortableWaypoint({
         onChange={(e) => updateWaypoint(wp.id, { notes: e.target.value })}
         disabled={disabled}
       />
+      <ReplaceWaypointControl wp={wp} disabled={disabled} onReplaced={onWaypointReplaced} />
     </div>
   );
 }
 
-export function WaypointList({ disabled = false }: { disabled?: boolean }) {
+export function WaypointList({
+  disabled = false,
+  onWaypointReplaced,
+}: {
+  disabled?: boolean;
+  onWaypointReplaced?: () => void;
+}) {
   const { waypoints, reorderWaypoints } = useTripStore();
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -191,7 +322,13 @@ export function WaypointList({ disabled = false }: { disabled?: boolean }) {
       >
         <div className="space-y-2.5">
           {waypoints.map((wp, i) => (
-            <SortableWaypoint key={wp.id} wp={wp} index={i} disabled={disabled} />
+            <SortableWaypoint
+              key={wp.id}
+              wp={wp}
+              index={i}
+              disabled={disabled}
+              onWaypointReplaced={onWaypointReplaced}
+            />
           ))}
         </div>
       </SortableContext>

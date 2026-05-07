@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Link, router } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +17,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -33,7 +34,7 @@ import {
   STARTER_TEMPLATES,
   templateToWaypoints,
 } from "@/lib/trip-payload";
-import type { Trip } from "@/types/domain";
+import type { LocationSearchResult, Trip } from "@/types/domain";
 import { useAuthStore } from "@/stores/auth-store";
 import { colors, radius, space, type } from "@/theme/tokens";
 
@@ -120,6 +121,13 @@ export default function TripsScreen() {
   });
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<"manual" | "generate">("manual");
+  const [genQuery, setGenQuery] = useState("");
+  const [genSuggestions, setGenSuggestions] = useState<LocationSearchResult[]>([]);
+  const [genSuggesting, setGenSuggesting] = useState(false);
+  const [genPick, setGenPick] = useState<LocationSearchResult | null>(null);
+  const [genDays, setGenDays] = useState("3");
+  const [genPace, setGenPace] = useState<"relaxed" | "moderate" | "packed">("moderate");
   const [selectedCategory, setSelectedCategory] = useState(DISCOVERY_DEFAULT_CATEGORY);
   const [selectedRegion, setSelectedRegion] = useState(DISCOVERY_DEFAULT_REGION);
   const [newName, setNewName] = useState("");
@@ -166,7 +174,61 @@ export default function TripsScreen() {
   const openNewItineraryModal = () => {
     setNewName("");
     setStarterId("blank");
+    setCreateMode("manual");
+    setGenQuery("");
+    setGenSuggestions([]);
+    setGenPick(null);
+    setGenDays("3");
+    setGenPace("moderate");
     setModalOpen(true);
+  };
+
+  useEffect(() => {
+    const q = genQuery.trim();
+    if (q.length < 2 || createMode !== "generate") {
+      setGenSuggestions([]);
+      setGenSuggesting(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      setGenSuggesting(true);
+      void api
+        .searchLocations(q, undefined, { limit: 8 })
+        .then((rows) => setGenSuggestions(rows))
+        .catch(() => setGenSuggestions([]))
+        .finally(() => setGenSuggesting(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [genQuery, createMode]);
+
+  const generateItineraryFromDestination = async () => {
+    const label = (genPick?.name || genQuery).trim();
+    const n = Number.parseInt(genDays, 10);
+    if (label.length < 2) {
+      Alert.alert("Destination required", "Search and pick a place, or type a clear destination name.");
+      return;
+    }
+    if (!Number.isFinite(n) || n < 1 || n > 14) {
+      Alert.alert("Invalid days", "Use between 1 and 14 days.");
+      return;
+    }
+    try {
+      setCreating(true);
+      const result = await api.generateTripFromDestination({
+        destination: label,
+        days: n,
+        pace: genPace,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["trips"] });
+      setModalOpen(false);
+      trackEvent("trip.generated_from_destination", { tripId: result.trip.id, days: n });
+      router.push(`/planner/${result.trip.id}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      Alert.alert("Could not generate", msg);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const createItinerary = async () => {
@@ -435,35 +497,119 @@ export default function TripsScreen() {
               <SurfaceCard style={styles.modalCard}>
                 <Text style={styles.modalTitle}>New itinerary</Text>
                 <Text style={[type.caption, styles.modalSub]}>
-                  Same flow as the web app: pick a starter or a blank map, name your trip, then plan in the map.
+                  Start blank, use a template, or generate day-by-day stops near a destination.
                 </Text>
-                <TextField
-                  label="Itinerary name"
-                  placeholder={DEFAULT_TRIP_NAME}
-                  value={newName}
-                  onChangeText={setNewName}
-                />
-                <Text style={styles.fieldLabel}>Start from</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
                   <Pressable
-                    style={[styles.chip, starterId === "blank" && styles.chipActive]}
-                    onPress={() => setStarterId("blank")}
+                    style={[styles.chip, createMode === "manual" && styles.chipActive]}
+                    onPress={() => setCreateMode("manual")}
                   >
-                    <Text style={[styles.chipTitle, starterId === "blank" && styles.chipTitleActive]}>Blank map</Text>
-                    <Text style={styles.chipHint}>Add your own stops</Text>
+                    <Text style={[styles.chipTitle, createMode === "manual" && styles.chipTitleActive]}>Blank / template</Text>
+                    <Text style={styles.chipHint}>Classic create</Text>
                   </Pressable>
-                  {STARTER_TEMPLATES.map((t) => (
-                    <Pressable
-                      key={t.id}
-                      style={[styles.chip, starterId === t.id && styles.chipActive]}
-                      onPress={() => setStarterId(t.id)}
-                    >
-                      <Text style={[styles.chipTitle, starterId === t.id && styles.chipTitleActive]}>{t.title}</Text>
-                      <Text style={styles.chipHint}>{t.subtitle}</Text>
-                    </Pressable>
-                  ))}
+                  <Pressable
+                    style={[styles.chip, createMode === "generate" && styles.chipActive]}
+                    onPress={() => setCreateMode("generate")}
+                  >
+                    <Text style={[styles.chipTitle, createMode === "generate" && styles.chipTitleActive]}>By destination</Text>
+                    <Text style={styles.chipHint}>Hybrid planner</Text>
+                  </Pressable>
                 </ScrollView>
-                <PrimaryButton label="Create itinerary" loading={creating} onPress={() => void createItinerary()} />
+
+                {createMode === "manual" ? (
+                  <>
+                    <TextField
+                      label="Itinerary name"
+                      placeholder={DEFAULT_TRIP_NAME}
+                      value={newName}
+                      onChangeText={setNewName}
+                    />
+                    <Text style={styles.fieldLabel}>Start from</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+                      <Pressable
+                        style={[styles.chip, starterId === "blank" && styles.chipActive]}
+                        onPress={() => setStarterId("blank")}
+                      >
+                        <Text style={[styles.chipTitle, starterId === "blank" && styles.chipTitleActive]}>Blank map</Text>
+                        <Text style={styles.chipHint}>Add your own stops</Text>
+                      </Pressable>
+                      {STARTER_TEMPLATES.map((t) => (
+                        <Pressable
+                          key={t.id}
+                          style={[styles.chip, starterId === t.id && styles.chipActive]}
+                          onPress={() => setStarterId(t.id)}
+                        >
+                          <Text style={[styles.chipTitle, starterId === t.id && styles.chipTitleActive]}>{t.title}</Text>
+                          <Text style={styles.chipHint}>{t.subtitle}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    <PrimaryButton label="Create itinerary" loading={creating} onPress={() => void createItinerary()} />
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.fieldLabel}>Destination</Text>
+                    <TextInput
+                      placeholder="Search city or region…"
+                      placeholderTextColor={colors.textMuted}
+                      value={genQuery}
+                      onChangeText={(t) => {
+                        setGenQuery(t);
+                        setGenPick(null);
+                      }}
+                      style={styles.genSearchInput}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    {genSuggesting ? <ActivityIndicator size="small" color={colors.brandPrimary} style={{ marginVertical: 8 }} /> : null}
+                    <ScrollView style={{ maxHeight: 160 }} keyboardShouldPersistTaps="handled">
+                      {genSuggestions.map((s) => (
+                        <Pressable
+                          key={s.id}
+                          style={[styles.genSuggestionRow, genPick?.id === s.id && styles.genSuggestionRowActive]}
+                          onPress={() => {
+                            setGenPick(s);
+                            setGenQuery(s.name);
+                            setGenSuggestions([]);
+                          }}
+                        >
+                          <Text style={styles.rowTitle} numberOfLines={1}>
+                            {s.name}
+                          </Text>
+                          {s.fullName ? (
+                            <Text style={styles.publicCardMeta} numberOfLines={1}>
+                              {s.fullName}
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    <TextField label="Days (1–14)" value={genDays} onChangeText={setGenDays} keyboardType="number-pad" />
+                    <Text style={styles.fieldLabel}>Pace</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+                      {(
+                        [
+                          ["relaxed", "Relaxed"],
+                          ["moderate", "Moderate"],
+                          ["packed", "Packed"],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <Pressable
+                          key={key}
+                          style={[styles.chip, genPace === key && styles.chipActive]}
+                          onPress={() => setGenPace(key)}
+                        >
+                          <Text style={[styles.chipTitle, genPace === key && styles.chipTitleActive]}>{label}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    <PrimaryButton
+                      label="Generate itinerary"
+                      loading={creating}
+                      onPress={() => void generateItineraryFromDestination()}
+                    />
+                  </>
+                )}
                 <PrimaryButton label="Cancel" variant="ghost" disabled={creating} onPress={() => setModalOpen(false)} />
               </SurfaceCard>
             </Pressable>
@@ -861,4 +1007,21 @@ const styles = StyleSheet.create({
     padding: space.md,
     backgroundColor: "#fff",
   },
+  genSearchInput: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.text,
+    backgroundColor: colors.surface,
+  },
+  genSuggestionRow: {
+    paddingVertical: 10,
+    paddingHorizontal: space.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  genSuggestionRowActive: { backgroundColor: "#eff6ff" },
 });
