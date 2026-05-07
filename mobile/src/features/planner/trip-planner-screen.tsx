@@ -489,7 +489,7 @@ export function TripPlannerScreen({ tripId }: Props) {
   const poiKey = (mapboxId: string, index: number) => `${mapboxId || "poi"}:${index}`;
   useEffect(() => {
     const query = poiSearchText.trim();
-    if (query.length < 2) {
+    if (query.length < 3) {
       suggestionRequestIdRef.current += 1;
       setSearchSuggestions([]);
       setSuggesting(false);
@@ -533,7 +533,7 @@ export function TripPlannerScreen({ tripId }: Props) {
     };
   }, [poiSearchText]);
   useEffect(() => {
-    if (poiSearchText.trim().length < 2) {
+    if (poiSearchText.trim().length < 3) {
       suggestionAnchorRef.current = null;
     }
   }, [poiSearchText]);

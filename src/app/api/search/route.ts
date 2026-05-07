@@ -2,19 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "@/lib/randomUuid";
 import { unstable_cache } from "next/cache";
 
+const SUGGEST_REVALIDATE_SECONDS = 60 * 60;
+const RETRIEVE_REVALIDATE_SECONDS = 24 * 60 * 60;
+
+function normalizeSearchQuery(q: string): string {
+  return q.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function normalizeSuggestCacheKey(
   q: string,
   proximity: string | null,
   language: string,
   limit: string
 ): string[] {
-  const trimmed = q.trim().toLowerCase();
+  const trimmed = normalizeSearchQuery(q);
   const prox = proximity ? proximity.replace(/\s/g, "") : "";
-  return ["search", "suggest", trimmed, prox, language, limit];
+  return ["search", "suggest", trimmed, prox, language.trim().toLowerCase(), limit];
 }
 
-function normalizeRetrieveCacheKey(mapboxId: string, language: string, sessionToken: string): string[] {
-  return ["search", "retrieve", mapboxId, language.toLowerCase(), sessionToken];
+function normalizeRetrieveCacheKey(mapboxId: string, language: string): string[] {
+  return ["search", "retrieve", mapboxId, language.trim().toLowerCase()];
 }
 
 interface SearchSuggestionResult {
@@ -219,7 +226,12 @@ async function fetchMapboxSuggest(
     deduped.push(s);
     if (deduped.length >= Number(limit)) break;
   }
-  return deduped.map(({ _score, ...item }) => item);
+  return deduped.map((item) => ({
+    id: item.id,
+    name: item.name,
+    fullName: item.fullName,
+    featureType: item.featureType,
+  }));
 }
 
 async function fetchMapboxRetrieve(
@@ -259,11 +271,11 @@ async function getCachedRetrieve(
   token: string,
   sessionToken: string
 ) {
-  const cacheKey = normalizeRetrieveCacheKey(mapboxId, language, sessionToken);
+  const cacheKey = normalizeRetrieveCacheKey(mapboxId, language);
   const cachedRetrieve = unstable_cache(
     () => fetchMapboxRetrieve(mapboxId, language, token, sessionToken),
     cacheKey,
-    { revalidate: 86400 }
+    { revalidate: RETRIEVE_REVALIDATE_SECONDS }
   );
   return cachedRetrieve();
 }
@@ -301,23 +313,24 @@ export async function GET(req: NextRequest) {
   if (!q) {
     return NextResponse.json([], { status: 200 });
   }
-  if (q.trim().length < 3) {
+  const normalizedQuery = normalizeSearchQuery(q);
+  if (normalizedQuery.length < 3) {
     return NextResponse.json([], { status: 200 });
   }
 
-  const cacheKey = normalizeSuggestCacheKey(q, proximity, language, limit);
+  const cacheKey = normalizeSuggestCacheKey(normalizedQuery, proximity, language, limit);
 
   const getCachedSearch = unstable_cache(
-    () => fetchMapboxSuggest(q, proximity, limit, language, token, sessionToken),
+    () => fetchMapboxSuggest(normalizedQuery, proximity, limit, language, token, sessionToken),
     cacheKey,
-    { revalidate: 900 }
+    { revalidate: SUGGEST_REVALIDATE_SECONDS }
   );
 
   try {
     const results = await getCachedSearch();
     return NextResponse.json(results, {
       headers: {
-        "Cache-Control": "public, s-maxage=900, stale-while-revalidate=1800",
+        "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=3600",
       },
     });
   } catch (err) {

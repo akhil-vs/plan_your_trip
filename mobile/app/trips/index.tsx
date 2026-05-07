@@ -185,7 +185,7 @@ export default function TripsScreen() {
 
   useEffect(() => {
     const q = genQuery.trim();
-    if (q.length < 2 || createMode !== "generate") {
+    if (q.length < 3 || createMode !== "generate") {
       setGenSuggestions([]);
       setGenSuggesting(false);
       return;
@@ -204,7 +204,7 @@ export default function TripsScreen() {
   const generateItineraryFromDestination = async () => {
     const label = (genPick?.name || genQuery).trim();
     const n = Number.parseInt(genDays, 10);
-    if (label.length < 2) {
+    if (label.length < 3) {
       Alert.alert("Destination required", "Search and pick a place, or type a clear destination name.");
       return;
     }

@@ -1,22 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 
 export const dynamic = "force-dynamic";
+const REVERSE_GEOCODE_REVALIDATE_SECONDS = 60 * 60;
 
 function fallbackName(lat: number, lng: number) {
   return `Selected location (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
 }
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = req.nextUrl;
-  const latRaw = searchParams.get("lat");
-  const lngRaw = searchParams.get("lng");
-  const lat = Number(latRaw);
-  const lng = Number(lngRaw);
-
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 });
-  }
-
+async function fetchReverseGeocodeName(lat: number, lng: number) {
   const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN;
   if (mapboxToken) {
     try {
@@ -43,7 +35,7 @@ export async function GET(req: NextRequest) {
           feature?.properties?.name ||
           null;
         if (typeof placeName === "string" && placeName.trim()) {
-          return NextResponse.json({ name: placeName.trim() });
+          return placeName.trim();
         }
       }
     } catch {
@@ -64,7 +56,7 @@ export async function GET(req: NextRequest) {
         const data = await res.json();
         const label = data?.features?.[0]?.properties?.formatted;
         if (typeof label === "string" && label.trim()) {
-          return NextResponse.json({ name: label.trim() });
+          return label.trim();
         }
       }
     } catch {
@@ -72,6 +64,36 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ name: fallbackName(lat, lng) });
+  return fallbackName(lat, lng);
+}
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl;
+  const latRaw = searchParams.get("lat");
+  const lngRaw = searchParams.get("lng");
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 });
+  }
+
+  const roundedLat = Number(lat.toFixed(5));
+  const roundedLng = Number(lng.toFixed(5));
+  const providerKey = process.env.MAPBOX_ACCESS_TOKEN ? "mapbox" : process.env.GEOAPIFY_API_KEY ? "geoapify" : "fallback";
+  const getCachedName = unstable_cache(
+    () => fetchReverseGeocodeName(roundedLat, roundedLng),
+    ["reverse-geocode", providerKey, String(roundedLat), String(roundedLng)],
+    { revalidate: REVERSE_GEOCODE_REVALIDATE_SECONDS }
+  );
+  const name = await getCachedName();
+  return NextResponse.json(
+    { name },
+    {
+      headers: {
+        "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=3600",
+      },
+    }
+  );
 }
 

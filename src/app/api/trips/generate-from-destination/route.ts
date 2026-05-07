@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
       ? Math.max(5, Math.round(optimizationSettings.defaultVisitMinutes))
       : 60;
 
-  if (!mapboxId && destination.length < 2) {
+  if (!mapboxId && destination.length < 3) {
     return NextResponse.json(
       { error: "Enter a destination or choose a place from search.", code: "VALIDATION" },
       { status: 400 }

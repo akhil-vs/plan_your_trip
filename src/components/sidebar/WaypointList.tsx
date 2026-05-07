@@ -58,7 +58,7 @@ function ReplaceWaypointControl({
 
   const doSearch = async (q: string) => {
     if (disabled) return;
-    if (q.trim().length < 2) {
+    if (q.trim().length < 3) {
       setResults([]);
       return;
     }

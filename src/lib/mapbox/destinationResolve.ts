@@ -109,10 +109,14 @@ async function mapboxRetrieve(
   };
 }
 
-const TTL_SUGGEST_MS = 15 * 60 * 1000;
+const TTL_SUGGEST_MS = 60 * 60 * 1000;
 const TTL_RETRIEVE_MS = 24 * 60 * 60 * 1000;
 const TTL_AREA_CANDIDATES_MS = 30 * 60 * 1000;
 const AREA_CACHE_KEY_VERSION = "v2";
+
+function normalizeSearchQuery(q: string): string {
+  return q.trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 /**
  * Resolve a free-text destination or existing Mapbox ID to coordinates (server-side).
@@ -134,11 +138,11 @@ export async function resolveDestination(input: {
     );
   }
 
-  const q = input.destinationQuery?.trim();
-  if (!q || q.length < 2) return null;
+  const q = normalizeSearchQuery(input.destinationQuery ?? "");
+  if (q.length < 3) return null;
 
   const suggestions = await getOrSetCache(
-    `mapbox:suggest:${language}:5:${q.toLowerCase()}`,
+    `mapbox:suggest:${language}:5:${q}`,
     TTL_SUGGEST_MS,
     () => mapboxSuggest(q, "5", language, token, sessionToken)
   );
@@ -165,7 +169,7 @@ export async function fetchMapboxAreaCandidates(input: {
   if (!token) return [];
 
   const { lat, lng, days, limit, bbox, destinationLabel } = input;
-  const destKey = (destinationLabel || "").trim().toLowerCase().slice(0, 80);
+  const destKey = normalizeSearchQuery(destinationLabel || "").slice(0, 80);
   const bboxKey = bbox ? bbox.map((v) => normalizeCoord(v, 3)).join(",") : "none";
   const areaKey = `mapbox:area:${AREA_CACHE_KEY_VERSION}:${normalizeCoord(lat, 3)}:${normalizeCoord(lng, 3)}:${days}:${limit}:${bboxKey}:${destKey}`;
   return getOrSetCache(areaKey, TTL_AREA_CANDIDATES_MS, async () => {

@@ -2,6 +2,8 @@
  * Shared travel matrix + waypoint ordering (also used by /api/optimize).
  */
 
+import { getOrSetCache, normalizeCoord } from "@/lib/server/memoryCache";
+
 export interface OptimizerWaypoint {
   id?: string;
   name: string;
@@ -48,8 +50,33 @@ export type MatrixPayload = {
   distances: (number | null)[][];
 };
 
+const MATRIX_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 function formatCoordinatesForMatrix(waypoints: OptimizerWaypoint[]): string {
-  return waypoints.map((wp) => `${wp.lng},${wp.lat}`).join(";");
+  return waypoints.map((wp) => `${normalizeCoord(wp.lng, 6)},${normalizeCoord(wp.lat, 6)}`).join(";");
+}
+
+async function fetchMapboxMatrixDirect(
+  profile: string,
+  coordinates: string,
+  token: string
+): Promise<MatrixPayload> {
+  const params = new URLSearchParams({
+    access_token: token,
+    annotations: "duration,distance",
+  });
+  const res = await fetch(
+    `https://api.mapbox.com/directions-matrix/v1/${profile}/${coordinates}?${params}`
+  ).catch(() => null);
+  if (!res || !res.ok) throw new Error("Matrix request failed");
+  const data = (await res.json().catch(() => null)) as
+    | {
+        durations?: (number | null)[][];
+        distances?: (number | null)[][];
+      }
+    | null;
+  if (!data?.durations || !data?.distances) throw new Error("Matrix response missing annotations");
+  return { durations: data.durations, distances: data.distances };
 }
 
 export async function fetchMapboxMatrix(
@@ -64,23 +91,12 @@ export async function fetchMapboxMatrix(
       : travelMode === "cycling"
         ? "mapbox/cycling"
         : "mapbox/driving";
-  const params = new URLSearchParams({
-    access_token: token,
-    annotations: "duration,distance",
-  });
   const coordinates = formatCoordinatesForMatrix(waypoints);
-  const res = await fetch(
-    `https://api.mapbox.com/directions-matrix/v1/${profile}/${coordinates}?${params}`
+  return getOrSetCache(
+    `mapbox:matrix:${profile}:${coordinates}`,
+    MATRIX_CACHE_TTL_MS,
+    () => fetchMapboxMatrixDirect(profile, coordinates, token)
   ).catch(() => null);
-  if (!res || !res.ok) return null;
-  const data = (await res.json().catch(() => null)) as
-    | {
-        durations?: (number | null)[][];
-        distances?: (number | null)[][];
-      }
-    | null;
-  if (!data?.durations || !data?.distances) return null;
-  return { durations: data.durations, distances: data.distances };
 }
 
 export function createFallbackMatrix(

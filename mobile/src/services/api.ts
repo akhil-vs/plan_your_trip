@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { env } from "@/config/env";
 import { randomUUID } from "@/lib/randomUuid";
 import type {
@@ -45,7 +46,7 @@ type SearchCacheEntry = {
 };
 type RetrySuppressionEntry = { until: number; reason: string };
 
-const SEARCH_CACHE_TTL_MS = 30_000;
+const SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const SEARCH_RETRY_SUPPRESSION_MS = 12_000;
 const SEARCH_MAX_RETRIES = 2;
 const searchLocationsCache = new Map<string, SearchCacheEntry>();
@@ -71,6 +72,76 @@ const getSuppressedReason = (key: string) => {
 const suppressSearchKey = (key: string, reason: string) => {
   suppressedSearchKeys.set(key, { until: Date.now() + SEARCH_RETRY_SUPPRESSION_MS, reason });
 };
+
+const normalizeSearchQuery = (query: string) => query.trim().toLowerCase().replace(/\s+/g, " ");
+
+const searchStorageKey = (bucket: string, cacheKey: string) =>
+  `plan-your-trip:${bucket}:${encodeURIComponent(cacheKey)}`;
+
+const isLocationSearchResult = (value: unknown): value is LocationSearchResult => {
+  const record = asRecord(value);
+  return (
+    typeof record.id === "string" &&
+    typeof record.name === "string" &&
+    Number.isFinite(record.lat) &&
+    Number.isFinite(record.lng)
+  );
+};
+
+const isSearchCacheEntry = (value: unknown): value is SearchCacheEntry => {
+  const record = asRecord(value);
+  return (
+    Number.isFinite(record.savedAt) &&
+    Array.isArray(record.data) &&
+    record.data.every((item: unknown) => isLocationSearchResult(item))
+  );
+};
+
+async function getSearchCache(
+  bucket: string,
+  memoryCache: Map<string, SearchCacheEntry>,
+  cacheKey: string
+): Promise<LocationSearchResult[] | null> {
+  const cached = memoryCache.get(cacheKey);
+  if (cached && Date.now() - cached.savedAt <= SEARCH_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const storageKey = searchStorageKey(bucket, cacheKey);
+  try {
+    const raw = await AsyncStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isSearchCacheEntry(parsed)) {
+      await AsyncStorage.removeItem(storageKey);
+      return null;
+    }
+    if (Date.now() - parsed.savedAt > SEARCH_CACHE_TTL_MS) {
+      memoryCache.delete(cacheKey);
+      await AsyncStorage.removeItem(storageKey);
+      return null;
+    }
+    memoryCache.set(cacheKey, parsed);
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+async function setSearchCache(
+  bucket: string,
+  memoryCache: Map<string, SearchCacheEntry>,
+  cacheKey: string,
+  data: LocationSearchResult[]
+) {
+  const entry = { savedAt: Date.now(), data };
+  memoryCache.set(cacheKey, entry);
+  try {
+    await AsyncStorage.setItem(searchStorageKey(bucket, cacheKey), JSON.stringify(entry));
+  } catch {
+    // Search still works if the device refuses the persistent cache write.
+  }
+}
 
 async function fetchJsonWithRetry<T>(url: string, keyForSuppression: string, options?: RequestInit): Promise<T | null> {
   const suppressedReason = getSuppressedReason(keyForSuppression);
@@ -160,83 +231,76 @@ export const api = {
     options?: { limit?: number; sessionToken?: string }
   ): Promise<LocationSearchResult[]> => {
     const token = env.mapboxPublicToken;
-    if (!token || !query.trim()) return [];
+    const normalizedQuery = normalizeSearchQuery(query);
+    if (!token || !normalizedQuery) return [];
     const limit = Number.isFinite(options?.limit) ? Math.max(1, Math.min(15, options?.limit ?? 10)) : 10;
     const sessionToken = options?.sessionToken || randomUUID();
     const proximityKey = proximity ? `${proximity.lat.toFixed(4)},${proximity.lng.toFixed(4)}` : "none";
-    const normalizedQuery = query.trim().toLowerCase();
-    const cacheKey = `${normalizedQuery}|${proximityKey}|${limit}|${sessionToken}`;
-    const cached = searchPoisCache.get(cacheKey);
-    if (cached && Date.now() - cached.savedAt <= SEARCH_CACHE_TTL_MS) {
-      return cached.data;
-    }
+    const cacheKey = `${normalizedQuery}|${proximityKey}|${limit}`;
+    const cached = await getSearchCache("search-pois", searchPoisCache, cacheKey);
+    if (cached) return cached;
     const inflight = inflightSearchPois.get(cacheKey);
     if (inflight) return inflight;
     const requestPromise = (async () => {
-    const params = new URLSearchParams({
-      access_token: token,
-      q: query.trim(),
-      types: "poi",
-      limit: String(limit),
-      session_token: sessionToken,
-      language: "en",
-    });
-    if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
-    const suggestPayload = await fetchJsonWithRetry<{ suggestions?: unknown[] }>(
-      `https://api.mapbox.com/search/searchbox/v1/suggest?${params.toString()}`,
-      `pois:suggest:${normalizedQuery}|${proximityKey}|${limit}`
-    );
-    if (!suggestPayload) return [];
-    const suggestions = Array.isArray(suggestPayload?.suggestions) ? suggestPayload.suggestions : [];
-    const top = suggestions
-      .filter((s: unknown) => {
-        const record = asRecord(s);
-        return typeof record.mapbox_id === "string" && record.mapbox_id.length > 0;
-      })
-      .slice(0, limit);
-    const features = await Promise.all(
-      top.map(async (sUnknown: unknown) => {
-        const s = asRecord(sUnknown);
-        const retrieveParams = new URLSearchParams({
-          access_token: token,
-          session_token: sessionToken,
-        });
-        const mapboxId = String(s.mapbox_id ?? "");
-        if (!mapboxId) return null;
-        const retrievePayload = await fetchJsonWithRetry<{ features?: unknown[] }>(
-          `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${retrieveParams.toString()}`,
-          `pois:retrieve:${mapboxId}|${sessionToken}`
-        );
-        if (!retrievePayload) return null;
-        const featureRaw = Array.isArray(retrievePayload?.features) ? retrievePayload.features[0] : null;
-        const feature = asRecord(featureRaw);
-        const geometry = asRecord(feature.geometry);
-        const featureProps = asRecord(feature.properties);
-        const coords = geometry.coordinates;
-        if (!Array.isArray(coords) || coords.length < 2) return null;
-        const preferredName =
-          featureProps.name_preferred ??
-          featureProps.name ??
-          s.name_preferred ??
-          s.name ??
-          firstSegment(featureProps.place_formatted) ??
-          firstSegment(s.full_address);
-        return {
-          id: String(featureProps.mapbox_id ?? mapboxId),
-          name: String(preferredName || "Unknown place"),
-          fullName: String(
-            featureProps.full_address ??
-              s.full_address ??
-              featureProps.place_formatted ??
-              ""
-          ),
-          lat: Number(coords[1]),
-          lng: Number(coords[0]),
-        } as LocationSearchResult;
-      })
-    );
+      const params = new URLSearchParams({
+        access_token: token,
+        q: normalizedQuery,
+        types: "poi",
+        limit: String(limit),
+        session_token: sessionToken,
+        language: "en",
+      });
+      if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
+      const suggestPayload = await fetchJsonWithRetry<{ suggestions?: unknown[] }>(
+        `https://api.mapbox.com/search/searchbox/v1/suggest?${params.toString()}`,
+        `pois:suggest:${normalizedQuery}|${proximityKey}|${limit}`
+      );
+      if (!suggestPayload) return [];
+      const suggestions = Array.isArray(suggestPayload?.suggestions) ? suggestPayload.suggestions : [];
+      const top = suggestions
+        .filter((s: unknown) => {
+          const record = asRecord(s);
+          return typeof record.mapbox_id === "string" && record.mapbox_id.length > 0;
+        })
+        .slice(0, limit);
+      const features = await Promise.all(
+        top.map(async (sUnknown: unknown) => {
+          const s = asRecord(sUnknown);
+          const retrieveParams = new URLSearchParams({
+            access_token: token,
+            session_token: sessionToken,
+          });
+          const mapboxId = String(s.mapbox_id ?? "");
+          if (!mapboxId) return null;
+          const retrievePayload = await fetchJsonWithRetry<{ features?: unknown[] }>(
+            `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapboxId)}?${retrieveParams.toString()}`,
+            `pois:retrieve:${mapboxId}`
+          );
+          if (!retrievePayload) return null;
+          const featureRaw = Array.isArray(retrievePayload?.features) ? retrievePayload.features[0] : null;
+          const feature = asRecord(featureRaw);
+          const geometry = asRecord(feature.geometry);
+          const featureProps = asRecord(feature.properties);
+          const coords = geometry.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) return null;
+          const preferredName =
+            featureProps.name_preferred ??
+            featureProps.name ??
+            s.name_preferred ??
+            s.name ??
+            firstSegment(featureProps.place_formatted) ??
+            firstSegment(s.full_address);
+          return {
+            id: String(featureProps.mapbox_id ?? mapboxId),
+            name: String(preferredName || "Unknown place"),
+            fullName: String(featureProps.full_address ?? s.full_address ?? featureProps.place_formatted ?? ""),
+            lat: Number(coords[1]),
+            lng: Number(coords[0]),
+          } as LocationSearchResult;
+        })
+      );
       const rows = features.filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
-      searchPoisCache.set(cacheKey, { savedAt: Date.now(), data: rows });
+      await setSearchCache("search-pois", searchPoisCache, cacheKey, rows);
       return rows;
     })();
     inflightSearchPois.set(cacheKey, requestPromise);
@@ -253,9 +317,9 @@ export const api = {
     options?: SearchLocationOptions
   ): Promise<LocationSearchResult[]> => {
     const token = env.mapboxPublicToken;
-    if (!token || !query.trim()) return [];
-    const normalizedQuery = query.trim().toLowerCase();
-    const encoded = encodeURIComponent(query.trim());
+    const normalizedQuery = normalizeSearchQuery(query);
+    if (!token || normalizedQuery.length < 3) return [];
+    const encoded = encodeURIComponent(normalizedQuery);
     const limit = Number.isFinite(options?.limit) ? String(Math.max(1, Math.min(30, options?.limit ?? 10))) : "10";
     const proximityKey = proximity ? `${proximity.lat.toFixed(4)},${proximity.lng.toFixed(4)}` : "none";
     const bboxKey =
@@ -264,64 +328,60 @@ export const api = {
         : "none";
     const typesKey = options?.types?.trim() || "poi,address,place,locality,neighborhood,district,region,country";
     const cacheKey = `${normalizedQuery}|${proximityKey}|${bboxKey}|${limit}|${typesKey}`;
-    const canUseCache = !options?.signal;
-    if (canUseCache) {
-      const cached = searchLocationsCache.get(cacheKey);
-      if (cached && Date.now() - cached.savedAt <= SEARCH_CACHE_TTL_MS) {
-        return cached.data;
-      }
+    const cached = await getSearchCache("search-locations", searchLocationsCache, cacheKey);
+    if (cached) return cached;
+    const canShareInflight = !options?.signal;
+    if (canShareInflight) {
       const inflight = inflightSearchLocations.get(cacheKey);
       if (inflight) return inflight;
     }
     const requestPromise = (async () => {
-    const params = new URLSearchParams({
-      access_token: token,
-      autocomplete: "true",
-      limit,
-      language: "en",
-      types: typesKey,
-    });
-    if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
-    if (options?.bbox && options.bbox.length === 4) {
-      params.set("bbox", options.bbox.map((v) => String(v)).join(","));
-    }
-    if (options?.sessionToken) {
-      params.set("session_token", options.sessionToken);
-    }
-    const payload = await fetchJsonWithRetry<{ features?: unknown[] }>(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?${params.toString()}`,
-      `locations:suggest:${cacheKey}`,
-      { signal: options?.signal }
-    );
-    if (!payload) return [];
-    const features = Array.isArray(payload?.features) ? payload.features : [];
-      const rows = features
-      .map((featureUnknown: unknown) => {
-        const f = asRecord(featureUnknown);
-        const geometry = asRecord(f.geometry);
-        const properties = asRecord(f.properties);
-        const coords = geometry.coordinates;
-        if (!Array.isArray(coords) || coords.length < 2) return null;
-        const preferredName =
-          properties.name ??
-          f.text ??
-          firstSegment(f.place_name) ??
-          firstSegment(properties.full_address);
-        return {
-          id: String(f.id ?? `${coords[1]}:${coords[0]}`),
-          name: String(preferredName || "Unknown place"),
-          fullName: String(properties.full_address ?? f.place_name ?? ""),
-          lat: Number(coords[1]),
-          lng: Number(coords[0]),
-        } as LocationSearchResult;
-      })
-      .filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
-      if (canUseCache) {
-        searchLocationsCache.set(cacheKey, { savedAt: Date.now(), data: rows });
+      const params = new URLSearchParams({
+        access_token: token,
+        autocomplete: "true",
+        limit,
+        language: "en",
+        types: typesKey,
+      });
+      if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
+      if (options?.bbox && options.bbox.length === 4) {
+        params.set("bbox", options.bbox.map((v) => String(v)).join(","));
       }
+      if (options?.sessionToken) {
+        params.set("session_token", options.sessionToken);
+      }
+      const payload = await fetchJsonWithRetry<{ features?: unknown[] }>(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?${params.toString()}`,
+        `locations:suggest:${cacheKey}`,
+        { signal: options?.signal }
+      );
+      if (!payload) return [];
+      const features = Array.isArray(payload?.features) ? payload.features : [];
+      const rows = features
+        .map((featureUnknown: unknown) => {
+          const f = asRecord(featureUnknown);
+          const geometry = asRecord(f.geometry);
+          const properties = asRecord(f.properties);
+          const coords = geometry.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) return null;
+          const preferredName =
+            properties.name ??
+            f.text ??
+            firstSegment(f.place_name) ??
+            firstSegment(properties.full_address);
+          return {
+            id: String(f.id ?? `${coords[1]}:${coords[0]}`),
+            name: String(preferredName || "Unknown place"),
+            fullName: String(properties.full_address ?? f.place_name ?? ""),
+            lat: Number(coords[1]),
+            lng: Number(coords[0]),
+          } as LocationSearchResult;
+        })
+        .filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
+      await setSearchCache("search-locations", searchLocationsCache, cacheKey, rows);
       return rows;
     })();
-    if (!canUseCache) return requestPromise;
+    if (!canShareInflight) return requestPromise;
     inflightSearchLocations.set(cacheKey, requestPromise);
     try {
       return await requestPromise;
