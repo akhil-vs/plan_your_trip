@@ -5,14 +5,17 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
   Archive,
+  BarChart3,
   BookOpen,
   Compass,
+  LayoutDashboard,
   LogOut,
   Menu,
   Plus,
   Route,
   Shield,
   User,
+  Users,
   Users2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,6 +52,13 @@ const sidebarNavItems = [
   { label: "Generate by destination", href: "/dashboard/generate", icon: Route },
 ];
 
+const adminNavItems = [
+  { label: "Dashboard", href: "/admin?section=dashboard", icon: LayoutDashboard },
+  { label: "Trips", href: "/admin?section=trips", icon: Compass },
+  { label: "Users", href: "/admin?section=users", icon: Users },
+  { label: "Analytics", href: "/admin?section=analytics", icon: BarChart3 },
+];
+
 export function AppChrome({ children }: AppChromeProps) {
   const router = useRouter();
   const { data: session } = useSession();
@@ -56,15 +66,29 @@ export function AppChrome({ children }: AppChromeProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const shouldApplyChrome = APP_ROUTES.some((route) => pathname.startsWith(route));
+  const isAdminRoute = pathname.startsWith("/admin");
+  const activeNavItems = isAdminRoute && adminReady && isAdminUser ? adminNavItems : sidebarNavItems;
+  const sidebarTitle = isAdminRoute && adminReady && isAdminUser ? "Viazo Admin" : "Viazo Elite";
+  const sidebarSubtitle = isAdminRoute && adminReady && isAdminUser ? "Executive oversight" : "Premium Planning";
+  const mobileMenuTitle = isAdminRoute && adminReady && isAdminUser ? "Admin menu" : "Dashboard menu";
+  const bottomCta = isAdminRoute && adminReady && isAdminUser
+    ? { href: "/dashboard", label: "Exit admin" }
+    : { href: "/planner", label: "New Trip" };
 
   if (!shouldApplyChrome) return <>{children}</>;
 
   const linkClass = (href: string) => {
     const targetPath = href.split("?")[0];
-    const targetView = href.includes("?view=") ? href.split("?view=")[1] : null;
+    const query = href.split("?")[1] ?? "";
+    const targetParams = new URLSearchParams(query);
+    const targetView = targetParams.get("view");
+    const targetSection = targetParams.get("section");
     const currentView = searchParams.get("view");
+    const currentSection = searchParams.get("section") ?? "dashboard";
     const isActive = targetView
       ? pathname === targetPath && currentView === targetView
+      : targetSection
+        ? pathname === targetPath && currentSection === targetSection
       : pathname === targetPath;
     return cn(
       "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",
@@ -82,11 +106,11 @@ export function AppChrome({ children }: AppChromeProps) {
             <SiteLogoLink />
           </div>
           <div className="pb-6">
-            <p className="text-2xl font-bold tracking-tight text-slate-900">Viazo Elite</p>
-            <p className="text-sm text-muted-foreground">Premium Planning</p>
+            <p className="text-2xl font-bold tracking-tight text-slate-900">{sidebarTitle}</p>
+            <p className="text-sm text-muted-foreground">{sidebarSubtitle}</p>
           </div>
           <nav className="space-y-1">
-            {sidebarNavItems.map((item) => {
+            {activeNavItems.map((item) => {
               const Icon = item.icon;
               return (
                 <Link key={item.label} href={item.href} className={linkClass(item.href)}>
@@ -97,9 +121,9 @@ export function AppChrome({ children }: AppChromeProps) {
             })}
           </nav>
           <div className="mt-auto">
-            <Link href="/planner">
+            <Link href={bottomCta.href}>
               <Button size="sm" className="h-11 w-full rounded-xl bg-[#031a45] text-white hover:bg-[#05235b]">
-                New Trip
+                {bottomCta.label}
               </Button>
             </Link>
           </div>
@@ -123,18 +147,18 @@ export function AppChrome({ children }: AppChromeProps) {
                   <SheetContent side="left" className="w-[290px] p-0">
                     <div className="flex h-full flex-col bg-white">
                       <SheetHeader className="border-b px-4 py-4 text-left">
-                        <SheetTitle>Dashboard menu</SheetTitle>
+                        <SheetTitle>{mobileMenuTitle}</SheetTitle>
                       </SheetHeader>
                       <div className="px-4 py-5">
                         <div className="pb-5">
                           <SiteLogoLink />
                         </div>
                         <div className="pb-6">
-                          <p className="text-2xl font-bold tracking-tight text-slate-900">Viazo Elite</p>
-                          <p className="text-sm text-muted-foreground">Premium Planning</p>
+                          <p className="text-2xl font-bold tracking-tight text-slate-900">{sidebarTitle}</p>
+                          <p className="text-sm text-muted-foreground">{sidebarSubtitle}</p>
                         </div>
                         <nav className="space-y-1">
-                          {sidebarNavItems.map((item) => {
+                          {activeNavItems.map((item) => {
                             const Icon = item.icon;
                             return (
                               <SheetClose asChild key={item.label}>

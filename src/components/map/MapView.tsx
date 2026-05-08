@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Map, { NavigationControl, MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { useMapStore, getMapStyleUrl } from "@/stores/mapStore";
@@ -19,7 +19,8 @@ interface MapViewProps {
 
 export function MapView({ mapboxToken }: MapViewProps) {
   const mapRef = useRef<MapRef>(null);
-  const hasAutoFittedRouteRef = useRef(false);
+  const autoFitModeRef = useRef<"none" | "waypoints" | "route">("none");
+  const [mapLoaded, setMapLoaded] = useState(false);
   const {
     viewState,
     setViewState,
@@ -77,22 +78,31 @@ export function MapView({ mapboxToken }: MapViewProps) {
 
   useEffect(() => {
     // New or reset planner session should allow one auto-fit again.
-    hasAutoFittedRouteRef.current = false;
+    autoFitModeRef.current = "none";
   }, [tripId]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || hasAutoFittedRouteRef.current) return;
+    if (!map || !mapLoaded) return;
 
     const routeCoords = route?.geometry?.coordinates;
-    if (!routeCoords || routeCoords.length < 2) return;
+    const hasRouteBounds = Boolean(routeCoords && routeCoords.length >= 2);
+    const nextFitMode = hasRouteBounds ? "route" : "waypoints";
+    if (autoFitModeRef.current === "route") return;
+    if (autoFitModeRef.current === "waypoints" && nextFitMode === "waypoints") return;
+
+    const boundsCoords =
+      hasRouteBounds && routeCoords
+        ? routeCoords
+        : waypoints.map((point) => [point.lng, point.lat] as [number, number]);
+    if (boundsCoords.length < 2) return;
 
     let minLng = Number.POSITIVE_INFINITY;
     let minLat = Number.POSITIVE_INFINITY;
     let maxLng = Number.NEGATIVE_INFINITY;
     let maxLat = Number.NEGATIVE_INFINITY;
 
-    for (const point of routeCoords) {
+    for (const point of boundsCoords) {
       const [lng, lat] = point;
       if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
       if (lng < minLng) minLng = lng;
@@ -116,12 +126,12 @@ export function MapView({ mapboxToken }: MapViewProps) {
         [maxLng, maxLat],
       ],
       {
-        padding: 56,
+        padding: { top: 72, bottom: 72, left: sidebarOpen ? 420 : 72, right: 72 },
         duration: 650,
       }
     );
-    hasAutoFittedRouteRef.current = true;
-  }, [route]);
+    autoFitModeRef.current = nextFitMode;
+  }, [mapLoaded, route, sidebarOpen, waypoints]);
 
   return (
     <div className="map-view-root relative w-full h-full min-h-0 overflow-hidden">
@@ -133,6 +143,7 @@ export function MapView({ mapboxToken }: MapViewProps) {
         mapStyle={getMapStyleUrl(mapStyle)}
         style={{ width: "100%", height: "100%" }}
         attributionControl={false}
+        onLoad={() => setMapLoaded(true)}
         onClick={(e) => {
           if (!pickPointsMode) return;
           // Marker clicks already stop propagation, so this is for "tap-to-add" only.

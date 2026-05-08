@@ -5,6 +5,7 @@ import { buildGeneratedItineraryFromDestination, type Pace, type RankingStyle } 
 import { buildItineraryNarrative } from "@/lib/llm/itineraryNarrative";
 import { resolveDestination } from "@/lib/mapbox/destinationResolve";
 import { prisma } from "@/lib/prisma";
+import { randomUUID } from "@/lib/randomUuid";
 import { createTripEvent } from "@/lib/tripEvents";
 import { buildTripCreatedActivityLines } from "@/lib/tripUpdateActivitySummary";
 
@@ -44,6 +45,96 @@ function isKnownHotspotName(name: string): boolean {
     n.includes("st michaels mount") ||
     n.includes("st michael s mount")
   );
+}
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+
+function buildPresetItinerary(rawPreset: unknown, days: number, defaultVisitMinutes: number) {
+  const preset = asRecord(rawPreset);
+  const rawDays = Array.isArray(preset.days) ? preset.days : [];
+  if (rawDays.length !== days || rawDays.length < 1 || rawDays.length > 14) return null;
+
+  const waypoints: Array<{
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    order: number;
+    visitMinutes: number;
+  }> = [];
+  const dayPlans: Array<{
+    day: number;
+    waypointIndexes: number[];
+    waypointIds: string[];
+    estimatedTravelMinutes: number;
+  }> = [];
+  const placesByDay: string[][] = [];
+  const narrativeDays: Array<{ day: number; title: string; summary: string; mealIdeas: string[] }> = [];
+
+  for (let dayIdx = 0; dayIdx < rawDays.length; dayIdx += 1) {
+    const rawDay = asRecord(rawDays[dayIdx]);
+    const rawStops = Array.isArray(rawDay.stops) ? rawDay.stops : [];
+    if (rawStops.length < 1) return null;
+
+    const indexes: number[] = [];
+    const ids: string[] = [];
+    const names: string[] = [];
+    for (const rawStop of rawStops) {
+      const stop = asRecord(rawStop);
+      const name = String(stop.name ?? "").trim();
+      const lat = Number(stop.lat);
+      const lng = Number(stop.lng);
+      if (name.length < 2 || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+      const id = randomUUID();
+      indexes.push(waypoints.length);
+      ids.push(id);
+      names.push(name);
+      waypoints.push({
+        id,
+        name,
+        lat,
+        lng,
+        order: waypoints.length,
+        visitMinutes: Math.max(5, Math.round(defaultVisitMinutes)),
+      });
+    }
+
+    const day = dayIdx + 1;
+    placesByDay.push(names);
+    dayPlans.push({
+      day,
+      waypointIndexes: indexes,
+      waypointIds: ids,
+      estimatedTravelMinutes: Math.max(0, rawStops.length - 1) * 25,
+    });
+    narrativeDays.push({
+      day,
+      title: String(rawDay.title ?? `Day ${day}`).trim() || `Day ${day}`,
+      summary: String(rawDay.summary ?? names.join(", ")).trim() || names.join(", "),
+      mealIdeas: [],
+    });
+  }
+
+  const tripName = String(preset.name ?? "").trim() || `Popular itinerary · ${days} days`;
+  const description = String(preset.description ?? "").trim() || `A curated ${days}-day itinerary.`;
+
+  return {
+    tripName,
+    description,
+    waypoints,
+    dayPlans,
+    placesByDay,
+    selectedStops: waypoints.map((wp) => ({ name: wp.name, lat: wp.lat, lng: wp.lng, popularityScore: 5 })),
+    alternativeStops: [],
+    narrative: {
+      tripIntro: description,
+      days: narrativeDays,
+      source: "popular_preset",
+    },
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -127,6 +218,101 @@ export async function POST(req: NextRequest) {
       { error: "Days must be between 1 and 14.", code: "VALIDATION" },
       { status: 400 }
     );
+  }
+
+  const presetBuilt = body?.presetPlan ? buildPresetItinerary(body.presetPlan, days, optimizerDefaultVisitMinutes) : null;
+  if (body?.presetPlan && !presetBuilt) {
+    return NextResponse.json(
+      { error: "Preset itinerary is invalid.", code: "VALIDATION" },
+      { status: 400 }
+    );
+  }
+
+  if (presetBuilt) {
+    if (preview) {
+      return NextResponse.json(
+        {
+          selectedStops: presetBuilt.selectedStops,
+          alternativeStops: presetBuilt.alternativeStops,
+        },
+        { status: 200 }
+      );
+    }
+
+    const aiPlanMetaValue = presetBuilt.narrative as unknown as Prisma.InputJsonValue;
+    try {
+      const trip = await prisma.trip.create({
+        data: {
+          name: presetBuilt.tripName,
+          description: presetBuilt.description,
+          aiPlanMeta: aiPlanMetaValue,
+          userId: authUser.id,
+          optimizerDayStartMinutes,
+          optimizerDayEndMinutes,
+          optimizerDefaultVisitMinutes,
+          waypoints: {
+            create: presetBuilt.waypoints.map((wp) => ({
+              id: wp.id,
+              name: wp.name,
+              notes: null,
+              lat: wp.lat,
+              lng: wp.lng,
+              order: wp.order,
+              visitMinutes: wp.visitMinutes,
+              openMinutes: 0,
+              closeMinutes: 23 * 60 + 59,
+            })),
+          },
+          dayPlans: {
+            create: presetBuilt.dayPlans.map((dp) => ({
+              day: dp.day,
+              waypointIndexes: dp.waypointIndexes,
+              waypointIds: dp.waypointIds,
+              estimatedTravelMinutes: dp.estimatedTravelMinutes,
+            })),
+          },
+          members: {
+            create: {
+              userId: authUser.id,
+              role: "OWNER",
+            },
+          },
+        },
+        include: {
+          waypoints: { orderBy: { order: "asc" } },
+          dayPlans: { orderBy: { day: "asc" } },
+          members: true,
+        },
+      });
+
+      await createTripEvent(
+        trip.id,
+        "trip.created",
+        {
+          name: trip.name,
+          waypointCount: trip.waypoints.length,
+          activityLines: buildTripCreatedActivityLines(
+            authUser.name ?? "Someone",
+            trip.name,
+            trip.waypoints.map((w) => ({ name: w.name, order: w.order }))
+          ),
+        },
+        authUser.id,
+        authUser.name ?? null
+      );
+
+      return NextResponse.json(
+        {
+          trip,
+          narrative: presetBuilt.narrative,
+        },
+        { status: 201 }
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save itinerary";
+      return NextResponse.json({ error: message, code: "SAVE_FAILED" }, { status: 500 });
+    }
   }
 
   const resolved = await resolveDestination({

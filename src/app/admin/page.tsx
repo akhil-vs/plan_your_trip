@@ -1,44 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useAdminAccess } from "@/contexts/AdminAccessContext";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { NotificationBell } from "@/components/notifications/NotificationBell";
-import {
-  ArrowLeft,
-  BarChart3,
-  Compass,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   FileDown,
   Filter,
   Globe,
-  HelpCircle,
-  LayoutDashboard,
-  LayoutGrid,
-  Menu,
-  Plus,
   Route,
-  Settings,
   Users,
 } from "lucide-react";
 
 type Plan = "FREE" | "PRO" | "TEAM";
 type AdminSection = "dashboard" | "trips" | "users" | "analytics";
 type RangeDays = 30 | 90;
+type GrowthPoint = { month: string; users: number; trips: number };
 
 interface AdminUser {
   id: string;
@@ -62,7 +47,7 @@ interface AdminStats {
     windowDays: number;
   };
   planDistribution: Array<{ plan: Plan; count: number }>;
-  growth: Array<{ month: string; users: number; trips: number }>;
+  growth: GrowthPoint[];
   funnel: { draftTrips: number; finalizedTrips: number; publicTrips: number };
   topCreators: Array<{
     id: string;
@@ -110,9 +95,52 @@ const PLAN_BAR: Record<Plan, string> = {
 };
 
 function formatMonthLabel(month: string) {
+  const dateValue = /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : month;
+  const d = new Date(`${dateValue}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return month;
+  return d.toLocaleDateString("en-GB", {
+    day: /^\d{4}-\d{2}-\d{2}$/.test(month) ? "numeric" : undefined,
+    month: "short",
+    year: "2-digit",
+  });
+}
+
+function formatCalendarMonth(month: string) {
   const d = new Date(`${month}-01T12:00:00Z`);
   if (Number.isNaN(d.getTime())) return month;
-  return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+  return d.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+}
+
+function dateKey(year: number, monthIndex: number, day: number) {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function buildCalendarDays(month: string, countsByDate: Map<string, GrowthPoint>) {
+  const firstDay = new Date(`${month}-01T12:00:00Z`);
+  if (Number.isNaN(firstDay.getTime())) return [];
+
+  const year = firstDay.getUTCFullYear();
+  const monthIndex = firstDay.getUTCMonth();
+  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  const leadingBlanks = firstDay.getUTCDay();
+  const cells: Array<{ key: string; day: number | null; users: number; trips: number }> = [];
+
+  for (let i = 0; i < leadingBlanks; i += 1) {
+    cells.push({ key: `blank-${i}`, day: null, users: 0, trips: 0 });
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const key = dateKey(year, monthIndex, day);
+    const counts = countsByDate.get(key);
+    cells.push({
+      key,
+      day,
+      users: counts?.users ?? 0,
+      trips: counts?.trips ?? 0,
+    });
+  }
+
+  return cells;
 }
 
 function GrowthStackedChart({ growth }: { growth: AdminStats["growth"] }) {
@@ -214,24 +242,22 @@ function planInsight(stats: AdminStats) {
   return `Plan mix is balanced across tiers. Watch pending invites (${stats.kpis.pendingInvites}) and collaboration depth to spot engagement gaps.`;
 }
 
-const navItems: Array<{ id: AdminSection; label: string; icon: typeof LayoutDashboard }> = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "trips", label: "Trips", icon: Compass },
-  { id: "users", label: "Users", icon: Users },
-  { id: "analytics", label: "Analytics", icon: BarChart3 },
-];
+function getAdminSection(value: string | null): AdminSection {
+  return value === "trips" || value === "users" || value === "analytics" ? value : "dashboard";
+}
 
 export default function AdminPage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const { isAdmin, ready: adminReady } = useAdminAccess();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [statsData, setStatsData] = useState<AdminStats | null>(null);
   const [rangeDays, setRangeDays] = useState<RangeDays>(30);
+  const [requestedGrowthMonth, setRequestedGrowthMonth] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [section, setSection] = useState<AdminSection>("dashboard");
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const section = getAdminSection(searchParams.get("section"));
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/auth/login");
@@ -285,6 +311,25 @@ export default function AdminPage() {
       { total: 0, FREE: 0, PRO: 0, TEAM: 0 } as Record<"total" | Plan, number>
     );
   }, [users]);
+
+  const growthMonths = useMemo(() => {
+    if (!statsData) return [];
+    return Array.from(new Set(statsData.growth.map((point) => point.month.slice(0, 7)))).sort();
+  }, [statsData]);
+
+  const selectedGrowthMonth = growthMonths.includes(requestedGrowthMonth)
+    ? requestedGrowthMonth
+    : growthMonths[growthMonths.length - 1] ?? "";
+
+  const growthCalendar = useMemo(() => {
+    if (!statsData || !selectedGrowthMonth) return [];
+    const countsByDate = new Map(statsData.growth.map((point) => [point.month, point]));
+    return buildCalendarDays(selectedGrowthMonth, countsByDate);
+  }, [selectedGrowthMonth, statsData]);
+
+  const selectedMonthIndex = selectedGrowthMonth ? growthMonths.indexOf(selectedGrowthMonth) : -1;
+  const canShowPreviousGrowthMonth = selectedMonthIndex > 0;
+  const canShowNextGrowthMonth = selectedMonthIndex >= 0 && selectedMonthIndex < growthMonths.length - 1;
 
   const updateUserPlan = async (userId: string, plan: Plan) => {
     setMessage("");
@@ -355,86 +400,9 @@ export default function AdminPage() {
     URL.revokeObjectURL(url);
   };
 
-  const sectionTitle =
-    section === "dashboard"
-      ? "Dashboard"
-      : section === "trips"
-        ? "Trips"
-        : section === "users"
-          ? "Users"
-          : "Analytics";
-
-  const initials = useMemo(() => {
-    const n = session?.user?.name || session?.user?.email || "A";
-    const parts = n.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    return n.slice(0, 2).toUpperCase();
-  }, [session?.user?.name, session?.user?.email]);
-
-  const NavBody = ({ onNavigate }: { onNavigate?: () => void }) => (
-    <div className="flex flex-col h-full">
-      <div className="px-5 pt-6 pb-4 border-b border-slate-100">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-            <LayoutGrid className="h-5 w-5" aria-hidden />
-          </div>
-          <div>
-            <p className="text-base font-bold text-blue-700 leading-tight tracking-tight">Viazo Admin</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">Executive oversight</p>
-          </div>
-        </div>
-      </div>
-      <nav className="flex-1 px-3 py-4 space-y-0.5" aria-label="Admin">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const active = section === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                setSection(item.id);
-                onNavigate?.();
-              }}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                active
-                  ? "bg-blue-50 text-blue-800 shadow-sm"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              )}
-            >
-              <Icon className={cn("h-5 w-5 shrink-0", active ? "text-blue-600" : "text-slate-400")} aria-hidden />
-              {item.label}
-            </button>
-          );
-        })}
-      </nav>
-      <div className="p-3 mt-auto border-t border-slate-100">
-        <a
-          href="mailto:hello@viazo.app?subject=Viazo%20Admin%20support"
-          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-        >
-          <HelpCircle className="h-5 w-5 text-slate-400" aria-hidden />
-          Support
-        </a>
-        <Link
-          href="/dashboard"
-          onClick={onNavigate}
-          className={cn(
-            buttonVariants({ variant: "ghost", size: "sm" }),
-            "w-full justify-start gap-2 mt-1 text-slate-600"
-          )}
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-          Exit admin
-        </Link>
-      </div>
-    </div>
-  );
-
   if (status === "loading" || (status === "authenticated" && !adminReady) || loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="flex min-h-[50vh] items-center justify-center">
         <div className="text-sm text-slate-500">Loading admin…</div>
       </div>
     );
@@ -443,55 +411,7 @@ export default function AdminPage() {
   if (!isAdmin) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex text-slate-900">
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white sticky top-0 h-screen">
-        <NavBody />
-      </aside>
-
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-        <header className="sticky top-0 z-40 flex h-14 sm:h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 backdrop-blur px-4 sm:px-6">
-          <div className="flex items-center gap-3 min-w-0">
-            <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" size="icon" className="lg:hidden shrink-0" aria-label="Open menu">
-                  <Menu className="h-5 w-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-[min(100%,280px)] p-0">
-                <SheetHeader className="sr-only">
-                  <SheetTitle>Admin navigation</SheetTitle>
-                </SheetHeader>
-                <NavBody onNavigate={() => setMobileNavOpen(false)} />
-              </SheetContent>
-            </Sheet>
-            <h1 className="text-sm sm:text-base font-semibold text-slate-800 truncate">{sectionTitle}</h1>
-          </div>
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            <NotificationBell className="rounded-full text-slate-600 hover:bg-slate-100" />
-            <Link href="/profile">
-              <Button variant="ghost" size="icon" className="rounded-full text-slate-600" aria-label="Settings">
-                <Settings className="h-5 w-5" />
-              </Button>
-            </Link>
-            <div className="hidden sm:block h-8 w-px bg-slate-200 mx-1" aria-hidden />
-            <div className="flex items-center gap-2 pl-1">
-              <div className="text-right hidden sm:block leading-tight">
-                <p className="text-sm font-semibold text-slate-900 truncate max-w-[140px]">
-                  {session?.user?.name || "Admin"}
-                </p>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Executive</p>
-              </div>
-              <div
-                className="h-9 w-9 rounded-full bg-gradient-to-br from-blue-600 to-slate-700 text-white text-xs font-bold flex items-center justify-center shadow-sm border border-white ring-2 ring-slate-100"
-                aria-hidden
-              >
-                {initials}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <main id="main" className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 lg:space-y-8">
+    <div className="space-y-6 p-4 text-slate-900 sm:p-6 lg:space-y-8 lg:p-8">
           {message && (
             <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
               {message}
@@ -906,29 +826,114 @@ export default function AdminPage() {
               </div>
 
               <Card className="border-slate-200/80 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base">Growth detail</CardTitle>
-                  <CardDescription>By month from selected window</CardDescription>
+                <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-base">Growth detail</CardTitle>
+                    <CardDescription>Daily users and trips for the selected month</CardDescription>
+                  </div>
+                  {growthMonths.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={!canShowPreviousGrowthMonth}
+                        onClick={() => {
+                          if (canShowPreviousGrowthMonth) {
+                            setRequestedGrowthMonth(growthMonths[selectedMonthIndex - 1]);
+                          }
+                        }}
+                        aria-label="Show previous month"
+                      >
+                        <ChevronLeft className="h-4 w-4" aria-hidden />
+                      </Button>
+                      <select
+                        value={selectedGrowthMonth}
+                        onChange={(event) => setRequestedGrowthMonth(event.target.value)}
+                        className="h-8 rounded-md border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                        aria-label="Select growth month"
+                      >
+                        {growthMonths.map((month) => (
+                          <option key={month} value={month}>
+                            {formatCalendarMonth(month)}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        disabled={!canShowNextGrowthMonth}
+                        onClick={() => {
+                          if (canShowNextGrowthMonth) {
+                            setRequestedGrowthMonth(growthMonths[selectedMonthIndex + 1]);
+                          }
+                        }}
+                        aria-label="Show next month"
+                      >
+                        <ChevronRight className="h-4 w-4" aria-hidden />
+                      </Button>
+                    </div>
+                  )}
                 </CardHeader>
-                <CardContent className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-slate-500">
-                        <th className="py-2 pr-4 font-medium">Month</th>
-                        <th className="py-2 pr-4 font-medium tabular-nums">Users</th>
-                        <th className="py-2 font-medium tabular-nums">Trips</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {statsData.growth.map((point) => (
-                        <tr key={point.month} className="border-b border-slate-100 last:border-0">
-                          <td className="py-2 pr-4 text-slate-800">{formatMonthLabel(point.month)}</td>
-                          <td className="py-2 pr-4 tabular-nums">{point.users}</td>
-                          <td className="py-2 tabular-nums">{point.trips}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <CardContent>
+                  {growthMonths.length === 0 ? (
+                    <p className="text-sm text-slate-500">No growth data for the selected window.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[640px] sm:min-w-0">
+                        <div className="grid grid-cols-7 gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                            <div key={day} className="px-2">
+                              {day}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-2 grid grid-cols-7 gap-2">
+                          {growthCalendar.map((day) => {
+                            const hasActivity = day.users > 0 || day.trips > 0;
+                            return (
+                              <div
+                                key={day.key}
+                                className={cn(
+                                  "min-h-28 rounded-xl border p-2",
+                                  day.day
+                                    ? "border-slate-200 bg-white shadow-sm"
+                                    : "border-transparent bg-transparent"
+                                )}
+                              >
+                                {day.day && (
+                                  <>
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm font-semibold tabular-nums text-slate-700">
+                                        {day.day}
+                                      </span>
+                                    </div>
+                                    {hasActivity && (
+                                      <div className="mt-3 flex flex-col gap-1.5">
+                                        {day.users > 0 && (
+                                          <span className="w-fit rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">
+                                            {day.users} {day.users === 1 ? "user" : "users"}
+                                          </span>
+                                        )}
+                                        {day.trips > 0 && (
+                                          <span className="w-fit rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">
+                                            {day.trips} {day.trips === 1 ? "trip" : "trips"}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -937,16 +942,6 @@ export default function AdminPage() {
           {section === "dashboard" && !statsData && (
             <p className="text-sm text-slate-500">No analytics loaded yet.</p>
           )}
-        </main>
-      </div>
-
-      <Link
-        href="/planner"
-        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg shadow-blue-600/30 hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-        aria-label="New itinerary"
-      >
-        <Plus className="h-7 w-7" strokeWidth={2.5} aria-hidden />
-      </Link>
     </div>
   );
 }
