@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useAdminAccess } from "@/contexts/AdminAccessContext";
@@ -246,7 +246,7 @@ function getAdminSection(value: string | null): AdminSection {
   return value === "trips" || value === "users" || value === "analytics" ? value : "dashboard";
 }
 
-export default function AdminPage() {
+function AdminPageContent() {
   const { status } = useSession();
   const { isAdmin, ready: adminReady } = useAdminAccess();
   const router = useRouter();
@@ -943,5 +943,19 @@ export default function AdminPage() {
             <p className="text-sm text-slate-500">No analytics loaded yet.</p>
           )}
     </div>
+  );
+}
+
+export default function AdminPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <div className="text-sm text-slate-500">Loading admin...</div>
+        </div>
+      }
+    >
+      <AdminPageContent />
+    </Suspense>
   );
 }
