@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import { useMapStore, type CollaborationTab } from "@/stores/mapStore";
 import { useTripStore, WaypointData } from "@/stores/tripStore";
 import { getDirections, optimizeWaypoints } from "@/lib/api/mapbox";
+import { buildDirectionsCoordKeyFromWaypoints } from "@/lib/route/directionsCoordKey";
+import {
+  parseTripWaypointsForStore,
+  tripPayloadFromJson,
+} from "@/lib/planner/parseTripApiWaypoints";
 import { SearchInput } from "./SearchInput";
 import { WaypointList } from "./WaypointList";
 import { PlaceDetailPanel } from "./PlaceDetailPanel";
@@ -81,6 +86,8 @@ import {
 import { toast } from "@/lib/toast";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { placeNameForActivity } from "@/lib/placeDisplayName";
+import { useIsMobilePlanner } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
 
 interface PlannerSidebarProps {
   tripId?: string;
@@ -262,6 +269,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   } = useTripStore();
   const { data: session } = useSession();
   const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
+  const isMobile = useIsMobilePlanner();
   const userPlan = session?.user?.plan || "FREE";
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -301,6 +309,11 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const [deleteTripDialogOpen, setDeleteTripDialogOpen] = useState(false);
   const [deletingTrip, setDeletingTrip] = useState(false);
   const lastEventAtRef = useRef(0);
+  const lastMergedRemoteTripEventIdRef = useRef<string | null>(null);
+  const routeDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const routeFetchAbortRef = useRef<AbortController | null>(null);
+  const lastSuccessfulDirectionsKeyRef = useRef("");
+  const hasUnsavedChangesRef = useRef(false);
   const routeSectionRef = useRef<HTMLElement | null>(null);
   const saveInFlightRef = useRef(false);
   const performSaveRef = useRef<(name: string) => Promise<void>>(async () => {});
@@ -662,6 +675,10 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     return currentSaveSignature !== lastSavedSignature;
   }, [tripId, waypoints.length, currentSaveSignature, lastSavedSignature]);
 
+  useEffect(() => {
+    hasUnsavedChangesRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges]);
+
   const formatMinutes = (minutes: number) => {
     const hrs = Math.floor(minutes / 60);
     const mins = minutes % 60;
@@ -806,45 +823,20 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     });
   }, [waypoints, defaultVisitMinutes]);
 
-
-  // Fetch route whenever waypoints change
-  const fetchRoute = useCallback(async () => {
-    if (waypoints.length < 2) {
-      setRoute(null);
-      return;
-    }
-
-    const coords: [number, number][] = waypoints.map((w) => [w.lng, w.lat]);
-
-    setLoading("route", true);
-    try {
-      const result = await getDirections(coords);
-      if (result) {
-        setRoute({
-          distance: result.distance,
-          duration: result.duration,
-          geometry: result.geometry,
-          legs: result.legs,
-        });
-      } else {
-        setRoute(null);
-      }
-    } catch {
-      setRoute(null);
-    } finally {
-      setLoading("route", false);
-    }
-  }, [waypoints, setRoute, setLoading]);
-
+  // Desktop starts with sidebar open; mobile keeps map full-screen.
   useEffect(() => {
-    fetchRoute();
-  }, [fetchRoute]);
-
-  // On mobile, start with sidebar closed
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 1023px)");
-    if (mq.matches) setSidebarOpen(false);
+    const mq = window.matchMedia("(min-width: 1024px)");
+    if (mq.matches) setSidebarOpen(true);
   }, [setSidebarOpen]);
+
+  useEffect(() => {
+    if (!sidebarOpen || !isMobile) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sidebarOpen, isMobile, setSidebarOpen]);
 
   useEffect(() => {
     if (tripId || waypoints.length > 0) {
@@ -888,6 +880,117 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     []
   );
 
+  const nonSyntheticWaypointsForRoute = useMemo(
+    () => waypoints.filter((w) => !isSyntheticTransitWaypoint(w)),
+    [waypoints, isSyntheticTransitWaypoint]
+  );
+
+  const routeCoordKey = useMemo(
+    () =>
+      nonSyntheticWaypointsForRoute.length < 2
+        ? ""
+        : buildDirectionsCoordKeyFromWaypoints(nonSyntheticWaypointsForRoute),
+    [nonSyntheticWaypointsForRoute]
+  );
+
+  const ROUTE_FETCH_DEBOUNCE_MS = 700;
+
+  useEffect(() => {
+    if (!routeCoordKey || nonSyntheticWaypointsForRoute.length < 2) {
+      if (routeDebounceTimerRef.current) {
+        clearTimeout(routeDebounceTimerRef.current);
+        routeDebounceTimerRef.current = null;
+      }
+      routeFetchAbortRef.current?.abort();
+      routeFetchAbortRef.current = null;
+      lastSuccessfulDirectionsKeyRef.current = "";
+      setRoute(null);
+      setLoading("route", false);
+      return;
+    }
+
+    const routeNow = useTripStore.getState().route;
+    if (
+      routeCoordKey === lastSuccessfulDirectionsKeyRef.current &&
+      routeNow?.geometry?.coordinates &&
+      routeNow.geometry.coordinates.length >= 2
+    ) {
+      return;
+    }
+
+    if (routeDebounceTimerRef.current) {
+      clearTimeout(routeDebounceTimerRef.current);
+      routeDebounceTimerRef.current = null;
+    }
+
+    routeDebounceTimerRef.current = setTimeout(() => {
+      routeDebounceTimerRef.current = null;
+      const wps = useTripStore
+        .getState()
+        .waypoints.filter((w) => !isSyntheticTransitWaypoint(w));
+      if (wps.length < 2) {
+        lastSuccessfulDirectionsKeyRef.current = "";
+        setRoute(null);
+        setLoading("route", false);
+        return;
+      }
+      const keyNow = buildDirectionsCoordKeyFromWaypoints(wps);
+      const latestRoute = useTripStore.getState().route;
+      if (
+        keyNow === lastSuccessfulDirectionsKeyRef.current &&
+        latestRoute?.geometry?.coordinates &&
+        latestRoute.geometry.coordinates.length >= 2
+      ) {
+        return;
+      }
+
+      routeFetchAbortRef.current?.abort();
+      const ac = new AbortController();
+      routeFetchAbortRef.current = ac;
+      setLoading("route", true);
+      const coords: [number, number][] = wps.map((w) => [w.lng, w.lat]);
+      getDirections(coords, { signal: ac.signal })
+        .then((result) => {
+          if (ac.signal.aborted) return;
+          if (result) {
+            lastSuccessfulDirectionsKeyRef.current = keyNow;
+            setRoute({
+              distance: result.distance,
+              duration: result.duration,
+              geometry: result.geometry,
+              legs: result.legs,
+            });
+          } else {
+            setRoute(null);
+          }
+        })
+        .catch(() => {
+          if (ac.signal.aborted) return;
+          setRoute(null);
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) {
+            setLoading("route", false);
+          }
+        });
+    }, ROUTE_FETCH_DEBOUNCE_MS);
+
+    return () => {
+      if (routeDebounceTimerRef.current) {
+        clearTimeout(routeDebounceTimerRef.current);
+        routeDebounceTimerRef.current = null;
+      }
+      routeFetchAbortRef.current?.abort();
+      routeFetchAbortRef.current = null;
+    };
+  }, [
+    routeCoordKey,
+    nonSyntheticWaypointsForRoute.length,
+    isSyntheticTransitWaypoint,
+    setRoute,
+    setLoading,
+  ]);
+
   // New trip: reset store. Existing trip: load data
   useEffect(() => {
     if (!tripId) {
@@ -895,6 +998,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       return;
     }
     setTripId(tripId);
+    lastMergedRemoteTripEventIdRef.current = null;
     fetch(`/api/trips/${tripId}`)
       .then((res) => res.json())
       .then((data) => {
@@ -1517,6 +1621,144 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           setIsPublic(Boolean(data.isPublic));
           if (data.currentUserRole) setCurrentUserRole(data.currentUserRole as TripRole);
           if (Array.isArray(data.members)) setMemberCount(data.members.length);
+
+          const tripPayload = tripPayloadFromJson(data);
+          const eventActorId = parsed?.actorId;
+          const shouldMergeRemoteWaypoints =
+            parsed?.type === "trip.updated" &&
+            typeof eventActorId === "string" &&
+            typeof session?.user?.id === "string" &&
+            eventActorId !== session.user.id &&
+            !hasUnsavedChangesRef.current &&
+            Boolean(tripPayload);
+
+          if (!shouldMergeRemoteWaypoints || !tripPayload) {
+            return;
+          }
+
+          const parsedWp = parseTripWaypointsForStore(tripPayload, isSyntheticTransitWaypoint);
+          if (!parsedWp) return;
+
+          const incomingKey = buildDirectionsCoordKeyFromWaypoints(parsedWp.waypoints);
+          const localKey = buildDirectionsCoordKeyFromWaypoints(
+            useTripStore.getState().waypoints.filter((w) => !isSyntheticTransitWaypoint(w))
+          );
+
+          if (incomingKey === localKey) {
+            return;
+          }
+
+          const eventId = parsed?.id;
+          if (typeof eventId === "string" && lastMergedRemoteTripEventIdRef.current === eventId) {
+            return;
+          }
+          if (typeof eventId === "string") {
+            lastMergedRemoteTripEventIdRef.current = eventId;
+          }
+
+          lastSuccessfulDirectionsKeyRef.current = "";
+          const loadedTripName = parsedWp.tripName;
+          setTripName(loadedTripName.trim() ? loadedTripName : DEFAULT_SAVE_NAME);
+
+          if (typeof tripPayload.optimizerDayStartMinutes === "number") {
+            setDayStartMinutes(tripPayload.optimizerDayStartMinutes);
+          }
+          if (typeof tripPayload.optimizerDayEndMinutes === "number") {
+            setDayEndMinutes(tripPayload.optimizerDayEndMinutes);
+          }
+          if (typeof tripPayload.optimizerDefaultVisitMinutes === "number") {
+            setDefaultVisitMinutes(tripPayload.optimizerDefaultVisitMinutes);
+          }
+
+          const loadedWaypoints = parsedWp.waypoints;
+          const loadedWaypointIdSet = parsedWp.loadedWaypointIdSet;
+
+          reorderWaypoints(loadedWaypoints);
+
+          const optDefVisit =
+            typeof tripPayload.optimizerDefaultVisitMinutes === "number"
+              ? tripPayload.optimizerDefaultVisitMinutes
+              : defaultVisitMinutes;
+
+          setVisitMinutesByWaypointId(
+            loadedWaypoints.reduce<Record<string, number>>((acc, wp) => {
+              acc[wp.id] = wp.visitMinutes ?? optDefVisit;
+              return acc;
+            }, {})
+          );
+          setTimeWindowsByWaypointId(
+            loadedWaypoints.reduce<Record<string, { openMinutes: number; closeMinutes: number }>>(
+              (acc, wp) => {
+                acc[wp.id] = {
+                  openMinutes: wp.openMinutes ?? 0,
+                  closeMinutes: wp.closeMinutes ?? 23 * 60 + 59,
+                };
+                return acc;
+              },
+              {}
+            )
+          );
+
+          const normalizedLoadedDayPlans = normalizeDayPlans(
+            loadedWaypoints.map((wp) => ({
+              ...wp,
+              isTransitSplit: wp.isTransitSplit ?? false,
+            })),
+            Array.isArray(tripPayload.dayPlans)
+              ? tripPayload.dayPlans.map((dp) => ({
+                  day: dp.day,
+                  waypointIds:
+                    dp.waypointIds &&
+                    dp.waypointIds.length > 0 &&
+                    dp.waypointIds.every((id) => loadedWaypointIdSet.has(id))
+                      ? dp.waypointIds
+                      : (dp.waypointIndexes || [])
+                          .map((idx) => loadedWaypoints[idx]?.id)
+                          .filter((id): id is string => typeof id === "string"),
+                  estimatedTravelMinutes: dp.estimatedTravelMinutes || 0,
+                  estimatedTravelMeters: dp.estimatedTravelMeters || 0,
+                }))
+              : []
+          );
+
+          const recalculatedLoadedDayPlans = recalculateDayPlanTravel(
+            normalizedLoadedDayPlans,
+            loadedWaypoints
+          );
+          setOptimizeDays(recalculatedLoadedDayPlans);
+          setLastSavedSignature(
+            createSaveSignature({
+              name: loadedTripName.trim() ? loadedTripName : DEFAULT_SAVE_NAME,
+              waypoints: loadedWaypoints.map((wp) => ({
+                name: wp.name,
+                notes: wp.notes,
+                lat: wp.lat,
+                lng: wp.lng,
+                order: wp.order,
+                isLocked: wp.isLocked ?? false,
+                isTransitSplit: wp.isTransitSplit ?? false,
+                visitMinutes: wp.visitMinutes,
+                openMinutes: wp.openMinutes,
+                closeMinutes: wp.closeMinutes,
+              })),
+              dayPlans: recalculatedLoadedDayPlans,
+              dayStartMinutes:
+                typeof tripPayload.optimizerDayStartMinutes === "number"
+                  ? tripPayload.optimizerDayStartMinutes
+                  : 9 * 60,
+              dayEndMinutes:
+                typeof tripPayload.optimizerDayEndMinutes === "number"
+                  ? tripPayload.optimizerDayEndMinutes
+                  : 20 * 60,
+              defaultVisitMinutes:
+                typeof tripPayload.optimizerDefaultVisitMinutes === "number"
+                  ? tripPayload.optimizerDefaultVisitMinutes
+                  : 60,
+            })
+          );
+          if (Array.isArray(tripPayload.dayPlans) && tripPayload.dayPlans.length > 0) {
+            setShowDayPlanner(true);
+          }
         })
         .catch(() => {});
     };
@@ -1525,7 +1767,26 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       stream.removeEventListener("trip_event", handleTripEvent);
       stream.close();
     };
-  }, [effectiveTripId, session?.user?.id, timelineEnabled]);
+  }, [
+    effectiveTripId,
+    session?.user?.id,
+    timelineEnabled,
+    isSyntheticTransitWaypoint,
+    normalizeDayPlans,
+    recalculateDayPlanTravel,
+    createSaveSignature,
+    defaultVisitMinutes,
+    reorderWaypoints,
+    setTripName,
+    setVisitMinutesByWaypointId,
+    setTimeWindowsByWaypointId,
+    setOptimizeDays,
+    setLastSavedSignature,
+    setDayStartMinutes,
+    setDayEndMinutes,
+    setDefaultVisitMinutes,
+    setShowDayPlanner,
+  ]);
 
   useEffect(() => {
     if (!collaborationPanelOpen || collaborationTab !== "activity") return;
@@ -1542,10 +1803,10 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   if (!sidebarOpen) {
     return (
       <>
-        <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-10 flex items-center gap-2">
+        <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-[70] flex items-center gap-2 pointer-events-none">
           <Link
             href={session?.user ? "/dashboard" : "/"}
-            className="p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
+            className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
             aria-label={session?.user ? "Back to dashboard" : "Back to home"}
             title={session?.user ? "Dashboard" : "Home"}
           >
@@ -1554,7 +1815,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           {adminReady && isAdminUser && (
             <Link
               href="/admin"
-              className="p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center text-amber-700"
+              className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center text-amber-700"
               aria-label="Admin panel"
               title="Admin panel"
             >
@@ -1562,12 +1823,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
             </Link>
           )}
           {session?.user ? (
-            <NotificationBell className="h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50 text-foreground" />
+            <NotificationBell className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50 text-foreground" />
           ) : null}
           <Button
             variant="ghost"
             size="icon"
-            className="h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
+            className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
             aria-label="Open itinerary sidebar"
             onClick={() => setSidebarOpen(true)}
           >
@@ -1575,7 +1836,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </Button>
         </div>
         <nav
-          className="fixed bottom-0 left-0 right-0 z-[60] lg:hidden pointer-events-none"
+          className="fixed bottom-0 left-0 right-0 z-[70] lg:hidden pointer-events-none"
           aria-label="Itinerary quick access"
         >
           <div className="pointer-events-auto mx-auto max-w-lg px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
@@ -1598,15 +1859,13 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     );
   }
 
-  return (
-    <>
-      {/* Backdrop on mobile */}
-      <div
-        className="fixed inset-0 bg-black/40 z-30 lg:hidden"
-        onClick={() => setSidebarOpen(false)}
-        aria-hidden="true"
-      />
-      <div className="w-[min(100vw,400px)] max-w-full lg:w-[380px] h-full bg-white lg:border-r flex flex-col shrink-0 relative overflow-hidden lg:relative max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:shadow-2xl max-lg:rounded-r-xl">
+  const sidebarPanel = (
+    <div
+      className={cn(
+        "flex h-full w-full flex-col overflow-hidden bg-white",
+        !isMobile && "lg:border-r"
+      )}
+    >
       {/* Header */}
       <div className="shrink-0 border-b border-slate-200/80 bg-gradient-to-b from-slate-50/90 to-white">
         <div className="px-3 pt-3 sm:px-4 sm:pt-4">
@@ -1696,7 +1955,16 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Close itinerary"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 max-lg:hidden"
                 onClick={() => setSidebarOpen(false)}
                 aria-label="Close sidebar"
               >
@@ -2071,6 +2339,27 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </section>
         </div>
       </div>
+    </div>
+  );
+
+  return (
+    <>
+      {isMobile ? (
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent
+            side="left"
+            showCloseButton={false}
+            accessibilityTitle="Trip itinerary"
+            className="z-[90] flex h-[100dvh] max-h-[100dvh] w-[min(92vw,400px)] max-w-[400px] flex-col gap-0 overflow-hidden border-0 p-0 shadow-2xl"
+          >
+            {sidebarPanel}
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <div className="absolute inset-y-0 left-0 z-30 hidden h-full w-[380px] lg:flex">
+          {sidebarPanel}
+        </div>
+      )}
 
       {/* Detail Panel overlay */}
       {selectedPOI && (
@@ -2539,7 +2828,6 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </Tabs>
         </SheetContent>
       </Sheet>
-    </div>
     <Dialog open={discardDraftDialogOpen} onOpenChange={setDiscardDraftDialogOpen}>
       <DialogContent showCloseButton>
         <DialogHeader>

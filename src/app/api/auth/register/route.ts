@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { normalizeAuthEmail } from "@/lib/auth/normalizeEmail";
+import {
+  databaseUnavailableMessage,
+  isDatabaseUnreachable,
+} from "@/lib/prisma/errors";
 
 export async function POST(req: NextRequest) {
   try {
     console.log("Registering user");
-    const { name, email, password } = await req.json();
+    const body = await req.json();
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const email = normalizeAuthEmail(body.email);
+    const password = typeof body.password === "string" ? body.password : "";
 
     if (!name || !email || !password) {
       return NextResponse.json(
@@ -46,6 +54,12 @@ export async function POST(req: NextRequest) {
 
   } catch (error: unknown) {
     console.error("Register error:", error);
+    if (isDatabaseUnreachable(error)) {
+      return NextResponse.json(
+        { error: databaseUnavailableMessage() },
+        { status: 503 }
+      );
+    }
     const getMessage = (): string => {
       if (error instanceof Error) {
         const e = error as Error & { cause?: unknown; code?: string; meta?: unknown };

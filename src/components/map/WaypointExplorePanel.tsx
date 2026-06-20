@@ -5,6 +5,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useMapStore } from "@/stores/mapStore";
 import { useTripStore, POI } from "@/stores/tripStore";
 import { fetchAttractions } from "@/lib/api/opentripmap";
+import { WAYPOINT_EXPLORE_ATTRACTIONS_KINDS } from "@/lib/opentripmap/waypointExploreParams";
 import { fetchPlaces } from "@/lib/api/geoapify";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -230,7 +231,7 @@ export function WaypointExplorePanel() {
         if (type === "attractions") {
           const pois = await fetchAttractions(pt.lat, pt.lng, {
             radius: searchRadius,
-            kinds: "interesting_places",
+            kinds: WAYPOINT_EXPLORE_ATTRACTIONS_KINDS,
           });
           for (const poi of pois) {
             if (seen.has(poi.id)) continue;

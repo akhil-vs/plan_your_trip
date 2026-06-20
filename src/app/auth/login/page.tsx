@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
+import { signInResultMessage } from "@/lib/auth/signInResultMessage";
 
 export default function LoginPage() {
   return (
@@ -45,8 +46,9 @@ function LoginForm() {
         redirect: false,
       });
 
-      if (res?.error) {
-        setError("Invalid email or password");
+      const signInError = signInResultMessage(res ?? undefined);
+      if (signInError) {
+        setError(signInError);
       } else if (res?.ok) {
         // Stay on the current origin (e.g. :3001) if Auth.js returned an absolute URL from NEXTAUTH_URL.
         const raw = res?.url ?? callbackUrl;
@@ -107,7 +109,15 @@ function LoginForm() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/auth/forgot-password"
+                  className="text-xs font-medium text-blue-600 hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 name="password"

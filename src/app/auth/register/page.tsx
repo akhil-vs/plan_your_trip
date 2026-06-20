@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
+import { signInResultMessage } from "@/lib/auth/signInResultMessage";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -72,8 +73,9 @@ export default function RegisterPage() {
         redirect: false,
       });
 
-      if (signInRes?.error) {
-        setError("Account created but sign in failed. Please log in.");
+      const postRegisterSignInError = signInResultMessage(signInRes ?? undefined);
+      if (postRegisterSignInError) {
+        setError(`Account created but sign-in failed: ${postRegisterSignInError}`);
       } else {
         router.push("/onboarding");
         router.refresh();

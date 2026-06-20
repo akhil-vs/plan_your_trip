@@ -2,7 +2,8 @@
  * Shared travel matrix + waypoint ordering (also used by /api/optimize).
  */
 
-import { getOrSetCache, normalizeCoord } from "@/lib/server/memoryCache";
+import { unstable_cache } from "next/cache";
+import { normalizeCoord } from "@/lib/server/memoryCache";
 
 export interface OptimizerWaypoint {
   id?: string;
@@ -50,7 +51,7 @@ export type MatrixPayload = {
   distances: (number | null)[][];
 };
 
-const MATRIX_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MATRIX_CACHE_REVALIDATE_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
 function formatCoordinatesForMatrix(waypoints: OptimizerWaypoint[]): string {
   return waypoints.map((wp) => `${normalizeCoord(wp.lng, 6)},${normalizeCoord(wp.lat, 6)}`).join(";");
@@ -92,11 +93,12 @@ export async function fetchMapboxMatrix(
         ? "mapbox/cycling"
         : "mapbox/driving";
   const coordinates = formatCoordinatesForMatrix(waypoints);
-  return getOrSetCache(
-    `mapbox:matrix:${profile}:${coordinates}`,
-    MATRIX_CACHE_TTL_MS,
-    () => fetchMapboxMatrixDirect(profile, coordinates, token)
-  ).catch(() => null);
+  const getCachedMatrix = unstable_cache(
+    () => fetchMapboxMatrixDirect(profile, coordinates, token),
+    ["mapbox-matrix", profile, coordinates],
+    { revalidate: MATRIX_CACHE_REVALIDATE_SECONDS }
+  );
+  return getCachedMatrix().catch(() => null);
 }
 
 export function createFallbackMatrix(

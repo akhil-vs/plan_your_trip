@@ -1,4 +1,12 @@
-import { fetchAttractionsAroundDestination, type AttractionStop } from "@/lib/nearbyAttractions";
+import {
+  fetchAttractionsAroundDestination,
+  type AttractionStop,
+} from "@/lib/nearbyAttractions";
+import {
+  fetchMapboxCategoryAttractions,
+  MAPBOX_ATTRACTIONS_DEFAULT_LIMIT_PER_CATEGORY,
+  MAPBOX_ATTRACTIONS_DEFAULT_RADIUS_METERS,
+} from "@/lib/mapbox/categoryAttractions";
 import { fetchMapboxAreaCandidates, type MapboxAreaCandidate } from "@/lib/mapbox/destinationResolve";
 import { reorderWaypointsWithinDayPartitions } from "@/lib/optimize/partitionedWaypointOrder";
 import { estimateLegMinutes, haversineKm } from "@/lib/optimize/travelAndOrder";
@@ -27,6 +35,204 @@ export function normalizeStopName(name: string): string {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/[^a-z0-9\s]/g, "");
+}
+
+/** Fallback disc when destination has no Mapbox bbox (generate discovery). */
+export const GENERATE_FETCH_RADIUS_KM = 40;
+/** Soft penalty in ranking — not a hard pool cutoff when bbox is available. */
+export const GENERATE_STRICT_RADIUS_KM = 15;
+
+export function distanceKmFromDestination(
+  stop: { lat: number; lng: number },
+  destination: { lat: number; lng: number }
+): number {
+  return haversineKm(
+    { name: "", lat: destination.lat, lng: destination.lng },
+    { name: "", lat: stop.lat, lng: stop.lng }
+  );
+}
+
+export function filterStopsNearDestination<T extends { lat: number; lng: number }>(
+  stops: T[],
+  destination: { lat: number; lng: number },
+  maxKm = GENERATE_FETCH_RADIUS_KM
+): T[] {
+  return stops.filter((s) => distanceKmFromDestination(s, destination) <= maxKm);
+}
+
+/** Keep POIs inside the destination bbox (padded); avoids shrinking trips to a center disc. */
+export function filterStopsForGenerate<T extends { lat: number; lng: number }>(
+  stops: T[],
+  destination: ResolvedDestination
+): T[] {
+  const bbox = destination.bbox;
+  if (bbox && bbox.length === 4) {
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const latPad = Math.max(0.025, (maxLat - minLat) * 0.15);
+    const lngPad = Math.max(0.025, (maxLng - minLng) * 0.15);
+    return stops.filter(
+      (s) =>
+        s.lat >= minLat - latPad &&
+        s.lat <= maxLat + latPad &&
+        s.lng >= minLng - lngPad &&
+        s.lng <= maxLng + lngPad
+    );
+  }
+  return filterStopsNearDestination(stops, destination, GENERATE_FETCH_RADIUS_KM);
+}
+
+/**
+ * Split stops into exactly `numDays` non-empty groups (k-means + rebalance + round-robin fallback).
+ */
+export function partitionStopsAcrossDays<T extends LatLng>(
+  stops: T[],
+  numDays: number
+): T[][] {
+  if (numDays < 1) return [stops];
+  if (stops.length < numDays) {
+    throw new Error(
+      "Not enough places found for this destination. Try fewer days or another area."
+    );
+  }
+
+  const assignment = kMeansAssign(stops, numDays);
+  const byCluster: T[][] = Array.from({ length: numDays }, () => []);
+  stops.forEach((s, i) => {
+    const c = assignment[i];
+    if (c >= 0 && c < numDays) byCluster[c].push(s);
+  });
+
+  for (let c = 0; c < numDays; c += 1) {
+    while (byCluster[c].length === 0) {
+      let bestFrom = -1;
+      let bestSize = 0;
+      for (let j = 0; j < numDays; j += 1) {
+        if (byCluster[j].length > bestSize) {
+          bestSize = byCluster[j].length;
+          bestFrom = j;
+        }
+      }
+      if (bestFrom < 0 || byCluster[bestFrom].length === 0) break;
+      const moved = byCluster[bestFrom].pop();
+      if (moved) byCluster[c].push(moved);
+    }
+  }
+
+  if (byCluster.some((g) => g.length === 0)) {
+    const buckets: T[][] = Array.from({ length: numDays }, () => []);
+    stops.forEach((s, i) => {
+      buckets[i % numDays].push(s);
+    });
+    return buckets;
+  }
+
+  return byCluster;
+}
+
+const LOCALITY_CATEGORIES = new Set([
+  "locality",
+  "place",
+  "town",
+  "village",
+  "neighborhood",
+  "district",
+]);
+
+/** True when the stop is a visitable attraction (not a bare town name). */
+export function isAttractionLike(stop: CandidateStop): boolean {
+  const name = normalizeStopName(stop.name);
+  if (name.length < 2 || name === "unnamed place") return false;
+
+  const pop = stop.popularityScore ?? 0;
+  if (pop >= 3) return true;
+
+  const cat = (stop.category || "").toLowerCase();
+  if (LOCALITY_CATEGORIES.has(cat)) return false;
+
+  const attractionCategoryHints = [
+    "museum",
+    "historic",
+    "landmark",
+    "attraction",
+    "castle",
+    "monument",
+    "cultural",
+    "interesting",
+    "entertainment",
+    "view",
+    "park",
+    "poi",
+    "architecture",
+    "heritage",
+    "gallery",
+    "ruins",
+    "fort",
+    "sculpture",
+    "art",
+    "other_art",
+    "industrial",
+    "aqueduct",
+    "water",
+    "engineering",
+    "memorial",
+    "statue",
+    "bridge",
+    "visitor",
+    "tourist",
+  ];
+  if (attractionCategoryHints.some((h) => cat.includes(h))) return true;
+
+  if (pop >= 1.5) return true;
+
+  const attractionNameHints = [
+    "museum",
+    "cathedral",
+    "abbey",
+    "castle",
+    "gallery",
+    "monument",
+    "tower",
+    "palace",
+    "fort",
+    "ruins",
+    "park",
+    "garden",
+    "beach",
+    "falls",
+    "bridge",
+    "temple",
+    "shrine",
+    "basilica",
+    "chapel",
+    "lighthouse",
+    "harbour",
+    "harbor",
+    "viewpoint",
+    "lookout",
+    "aquarium",
+    "zoo",
+    "kelpie",
+    "sculpture",
+    "statue",
+    "wheel",
+    "aqueduct",
+    "viaduct",
+    "memorial",
+    "arena",
+    "stadium",
+    "distillery",
+    "brewery",
+    "heritage",
+    "visitor centre",
+    "visitor center",
+    "funicular",
+    "cable car",
+    "gondola",
+    "pier",
+  ];
+  if (attractionNameHints.some((h) => name.includes(h))) return true;
+
+  return false;
 }
 
 /** Dedupe by normalized name + proximity (meters). */
@@ -140,6 +346,13 @@ export function kMeansAssign(points: LatLng[], k: number, maxIter = 25): number[
     if (!moved && iter > 2) break;
   }
 
+  const finalSizes = Array.from({ length: clusters }, (_, c) =>
+    assignment.filter((a) => a === c).length
+  );
+  if (finalSizes.some((s) => s === 0)) {
+    return points.map((_, i) => i % clusters);
+  }
+
   return assignment;
 }
 
@@ -147,7 +360,7 @@ function distanceSq(a: LatLng, b: LatLng) {
   return (a.lat - b.lat) ** 2 + (a.lng - b.lng) ** 2;
 }
 
-function hotspotPriorityScore(stop: CandidateStop): number {
+export function hotspotPriorityScore(stop: CandidateStop): number {
   const name = normalizeStopName(stop.name);
   const category = (stop.category || "").toLowerCase();
   let score = 0;
@@ -167,6 +380,15 @@ function hotspotPriorityScore(stop: CandidateStop): number {
     "island",
     "cliff",
     "garden",
+    "wheel",
+    "kelpie",
+    "sculpture",
+    "statue",
+    "memorial",
+    "aqueduct",
+    "viaduct",
+    "arena",
+    "distillery",
   ];
   for (const token of nameSignals) {
     if (name.includes(token)) score += 0.35;
@@ -180,8 +402,17 @@ function hotspotPriorityScore(stop: CandidateStop): number {
     "natural",
     "islands",
     "view_points",
-    "locality",
-    "must_see",
+    "attraction",
+    "landmark",
+    "museum",
+    "castles",
+    "fortifications",
+    "sculpture",
+    "other_art",
+    "industrial",
+    "engineering",
+    "memorial",
+    "aqueduct",
   ];
   for (const token of categorySignals) {
     if (category.includes(token)) score += 0.45;
@@ -189,17 +420,67 @@ function hotspotPriorityScore(stop: CandidateStop): number {
   return Math.min(score, 2.4);
 }
 
-function isMustSeeHotspot(stop: CandidateStop): boolean {
+export function scoreAttractionCandidate(
+  stop: CandidateStop,
+  destination: { lat: number; lng: number },
+  rankingStyle: RankingStyle
+): number {
+  const distKm = distanceKmFromDestination(stop, destination);
+  if (distKm > GENERATE_FETCH_RADIUS_KM) return -1;
+
+  const distScore = 1 / (1 + distKm);
+  const pop = stop.popularityScore ?? 0;
+  const hotspot = hotspotPriorityScore(stop);
+  const attraction = isAttractionLike(stop) ? 1 : 0;
+
+  let score = pop * 0.45 + distScore * 0.3 + hotspot * 0.35 + attraction * 0.4;
+  if (pop >= 6) score += 0.35;
+  if (distKm > GENERATE_STRICT_RADIUS_KM) score *= 0.72;
+
+  if (rankingStyle === "hidden_gems") {
+    score += Math.max(0, 4 - pop) * 0.22;
+  } else if (rankingStyle === "best_spread") {
+    score += distScore * 0.35;
+  } else {
+    score += pop * 0.2;
+  }
+
+  return score;
+}
+
+/** Local hotspot / must-see: only within fetch radius of the destination. */
+export function isLocalHotspot(
+  stop: CandidateStop,
+  destination: ResolvedDestination,
+  regionalSeedNames: Set<string>
+): boolean {
+  const distKm = distanceKmFromDestination(stop, destination);
   const name = normalizeStopName(stop.name);
-  const category = (stop.category || "").toLowerCase();
-  if (category.includes("must_see")) return true;
-  return (
-    name.includes("lands end") ||
-    name.includes("land s end") ||
-    name.includes("st ives") ||
-    name.includes("st michaels mount") ||
-    name.includes("st michael s mount") ||
-    hotspotPriorityScore(stop) >= 1.35
+  /** Explicit regional seeds (e.g. Cornwall) may sit outside the usual fetch disc. */
+  if (regionalSeedNames.has(name)) return distKm <= 55;
+
+  if (distKm > GENERATE_FETCH_RADIUS_KM) return false;
+
+  const pop = stop.popularityScore ?? 0;
+  if (pop >= 3.2 && isAttractionLike(stop)) return true;
+
+  if (hotspotPriorityScore(stop) >= 1.35 && isAttractionLike(stop)) return true;
+
+  if (pop >= 2.5 && distKm <= GENERATE_STRICT_RADIUS_KM && isAttractionLike(stop)) return true;
+
+  return false;
+}
+
+export function rankAttractionCandidates(
+  pool: CandidateStop[],
+  destination: ResolvedDestination,
+  rankingStyle: RankingStyle
+): CandidateStop[] {
+  const near = filterStopsForGenerate(pool, destination);
+  return [...near].sort(
+    (a, b) =>
+      scoreAttractionCandidate(b, destination, rankingStyle) -
+      scoreAttractionCandidate(a, destination, rankingStyle)
   );
 }
 
@@ -217,18 +498,92 @@ function mergeUniqueStops(first: CandidateStop[], second: CandidateStop[], limit
 
 function regionalHotspotSeeds(destination: ResolvedDestination): CandidateStop[] {
   const key = normalizeStopName(`${destination.name} ${destination.fullName || ""}`);
-  if (key.includes("cornwall")) {
+  if (key.includes("edinburgh")) {
     return [
-      { name: "Land's End", lat: 50.0669, lng: -5.7147, category: "must_see", popularityScore: 5 },
-      { name: "St Ives", lat: 50.2138, lng: -5.4786, category: "must_see", popularityScore: 5 },
-      { name: "St Michael's Mount", lat: 50.1163, lng: -5.4777, category: "must_see", popularityScore: 5 },
-      { name: "Penzance", lat: 50.1186, lng: -5.5371, category: "must_see", popularityScore: 4.6 },
+      {
+        name: "Edinburgh Castle",
+        lat: 55.94869,
+        lng: -3.20042,
+        category: "castles",
+        popularityScore: 7,
+      },
+      {
+        name: "Arthur's Seat",
+        lat: 55.9445,
+        lng: -3.1619,
+        category: "natural",
+        popularityScore: 6,
+      },
+      {
+        name: "National Museum of Scotland",
+        lat: 55.947,
+        lng: -3.1903,
+        category: "museum",
+        popularityScore: 6,
+      },
+      {
+        name: "St Giles' Cathedral",
+        lat: 55.9495,
+        lng: -3.1908,
+        category: "historic",
+        popularityScore: 5,
+      },
+    ];
+  }
+  if (key.includes("falkirk") || key.includes("grangemouth")) {
+    return [
+      {
+        name: "The Kelpies",
+        lat: 56.0198,
+        lng: -3.7785,
+        category: "sculpture",
+        popularityScore: 6,
+      },
+      {
+        name: "Falkirk Wheel",
+        lat: 56.0016,
+        lng: -3.8355,
+        category: "attraction",
+        popularityScore: 6,
+      },
+      {
+        name: "Callendar House",
+        lat: 55.9994,
+        lng: -3.7811,
+        category: "historic",
+        popularityScore: 4.5,
+      },
+      {
+        name: "Rough Castle Fort",
+        lat: 55.9989,
+        lng: -3.8324,
+        category: "historic",
+        popularityScore: 4,
+      },
+    ];
+  }
+  if (
+    key.includes("cornwall") ||
+    key.includes("penzance") ||
+    key.includes("st ives") ||
+    key.includes("lands end")
+  ) {
+    return [
+      { name: "Land's End", lat: 50.0669, lng: -5.7147, category: "landmark", popularityScore: 5 },
+      { name: "St Ives", lat: 50.2138, lng: -5.4786, category: "landmark", popularityScore: 5 },
+      { name: "St Michael's Mount", lat: 50.1163, lng: -5.4777, category: "landmark", popularityScore: 5 },
+      { name: "Penzance", lat: 50.1186, lng: -5.5371, category: "landmark", popularityScore: 4.6 },
     ];
   }
   return [];
 }
 
-function mergeAndRerankCandidates(
+function regionalSeedNameSet(destination: ResolvedDestination): Set<string> {
+  return new Set(regionalHotspotSeeds(destination).map((s) => normalizeStopName(s.name)));
+}
+
+/** Merge Mapbox area hits with OTM rows; exported for tests. */
+export function mergeAndRerankCandidates(
   mapboxRows: MapboxAreaCandidate[],
   popularityRows: AttractionStop[],
   destination: ResolvedDestination,
@@ -260,13 +615,13 @@ function mergeAndRerankCandidates(
     if (bestIdx >= 0) {
       popUsed[bestIdx] = true;
       const p = popularityRows[bestIdx];
-      const mapboxMustSee = (m.category || "").toLowerCase().includes("must_see");
+      // OTM pins attraction centroids; Mapbox often resolves to street/entrance coords.
       merged.push({
-        name: mapboxMustSee ? m.name : p.name || m.name,
-        lat: mapboxMustSee ? m.lat : p.lat,
-        lng: mapboxMustSee ? m.lng : p.lng,
+        name: m.name || p.name,
+        lat: p.lat,
+        lng: p.lng,
         popularityScore: p.popularityScore,
-        category: mapboxMustSee ? "must_see" : p.category || m.category,
+        category: p.category || m.category,
       });
     } else {
       merged.push({
@@ -466,11 +821,12 @@ export async function buildGeneratedItineraryFromDestination(input: {
 
   const spd = stopsPerDayForPace(pace);
   const targetCount = Math.min(60, Math.max(numDays, numDays * spd));
+  const poolDiscoveryTarget = Math.max(100, numDays * spd * 8);
 
   const popularityPool = await fetchAttractionsAroundDestination(
     destination.lat,
     destination.lng,
-    Math.max(targetCount * 3, 24),
+    poolDiscoveryTarget,
     numDays,
     destination.bbox
   );
@@ -482,13 +838,6 @@ export async function buildGeneratedItineraryFromDestination(input: {
     bbox: destination.bbox,
     destinationLabel: destination.fullName || destination.name,
   });
-  const fallbackPopularity = await fetchAttractionsAroundDestination(
-      destination.lat + 0.02,
-      destination.lng + 0.02,
-      Math.max(16, targetCount * 2),
-      numDays,
-      destination.bbox
-    );
   const fallbackMapbox = await fetchMapboxAreaCandidates({
     lat: destination.lat + 0.02,
     lng: destination.lng + 0.02,
@@ -499,11 +848,39 @@ export async function buildGeneratedItineraryFromDestination(input: {
   });
   const fallbackPool = mergeAndRerankCandidates(
     [...mapboxPool, ...fallbackMapbox],
-    [...popularityPool, ...fallbackPopularity],
+    popularityPool,
     destination,
     rankingStyle
   );
-  const candidatePool = dedupeStops([...regionalHotspotSeeds(destination), ...fallbackPool]);
+  const mapboxCategoryStops = process.env.MAPBOX_ACCESS_TOKEN
+    ? (
+        await fetchMapboxCategoryAttractions({
+          lat: destination.lat,
+          lng: destination.lng,
+          bbox: destination.bbox,
+          radiusMeters: MAPBOX_ATTRACTIONS_DEFAULT_RADIUS_METERS,
+          limitPerCategory: MAPBOX_ATTRACTIONS_DEFAULT_LIMIT_PER_CATEGORY,
+          accessToken: process.env.MAPBOX_ACCESS_TOKEN,
+        }).catch(() => [])
+      ).map((item) => ({
+        name: item.name,
+        lat: item.lat,
+        lng: item.lng,
+        popularityScore: item.popularityScore * 5,
+        category: item.category,
+      }))
+    : [];
+  const rawCandidatePool = dedupeStops([
+    ...regionalHotspotSeeds(destination),
+    ...fallbackPool,
+    ...mapboxCategoryStops,
+  ]);
+  const candidatePool = filterStopsForGenerate(rawCandidatePool, destination);
+  const rankedPool = rankAttractionCandidates(candidatePool, destination, rankingStyle);
+  const attractionLike = rankedPool.filter((s) => isAttractionLike(s));
+  const attractionPool =
+    attractionLike.length >= Math.max(numDays * 2, 6) ? attractionLike : rankedPool;
+  const regionalNames = regionalSeedNameSet(destination);
 
   const selectAreaCoverageStops = (pool: CandidateStop[], count: number): CandidateStop[] => {
     if (pool.length <= count) return [...pool];
@@ -564,17 +941,19 @@ export async function buildGeneratedItineraryFromDestination(input: {
 
   const selectedFromCoverage =
     rankingStyle === "most_popular"
-      ? candidatePool.slice(0, targetCount)
-      : selectAreaCoverageStops(candidatePool, targetCount);
-  const mustSeeFromPool = candidatePool.filter((s) => isMustSeeHotspot(s)).slice(0, Math.max(4, numDays + 2));
-  const selectedWithMustSee = mergeUniqueStops(mustSeeFromPool, selectedFromCoverage, targetCount);
+      ? attractionPool.slice(0, targetCount)
+      : selectAreaCoverageStops(attractionPool, targetCount);
+  const localHotspots = attractionPool
+    .filter((s) => isLocalHotspot(s, destination, regionalNames))
+    .slice(0, Math.max(4, numDays + 2));
+  const selectedWithHotspots = mergeUniqueStops(localHotspots, selectedFromCoverage, targetCount);
   const selected = (selectedOverrideStops && selectedOverrideStops.length > 0)
-    ? dedupeStops(selectedOverrideStops).slice(0, targetCount)
-    : selectedWithMustSee;
+    ? filterStopsForGenerate(dedupeStops(selectedOverrideStops), destination).slice(0, targetCount)
+    : selectedWithHotspots;
 
   let padIdx = 0;
-  while (selected.length < targetCount && padIdx < candidatePool.length) {
-    const s = candidatePool[padIdx++];
+  while (selected.length < targetCount && padIdx < rankedPool.length) {
+    const s = rankedPool[padIdx++];
     if (!selected.some((x) => x.name === s.name && x.lat === s.lat)) {
       selected.push(s);
     }
@@ -586,50 +965,19 @@ export async function buildGeneratedItineraryFromDestination(input: {
     );
   }
 
-  const rankedAlternatives = candidatePool
-    .filter((s) => !selected.some((x) => x.name === s.name && x.lat === s.lat && x.lng === s.lng))
-    .sort((a, b) => {
-      const pa = a.popularityScore ?? 0;
-      const pb = b.popularityScore ?? 0;
-      const ha = hotspotPriorityScore(a);
-      const hb = hotspotPriorityScore(b);
-      if (rankingStyle === "hidden_gems") {
-        const gems = Math.max(0, 3.8 - pb) - Math.max(0, 3.8 - pa);
-        if (gems !== 0) return gems;
-        return hb - ha;
-      }
-      if (hb !== ha) return hb - ha;
-      return pb - pa;
-    });
-  const mustSeeAlternatives = rankedAlternatives.filter((s) => isMustSeeHotspot(s)).slice(0, Math.max(4, numDays));
+  const rankedAlternatives = attractionPool.filter(
+    (s) => !selected.some((x) => x.name === s.name && x.lat === s.lat && x.lng === s.lng)
+  );
+  const localAlternatives = rankedAlternatives
+    .filter((s) => isLocalHotspot(s, destination, regionalNames))
+    .slice(0, Math.max(4, numDays));
   const alternativeStops = mergeUniqueStops(
-    mustSeeAlternatives,
+    localAlternatives,
     rankedAlternatives,
-    Math.max(12, numDays * 6)
+    Math.max(30, numDays * 12)
   );
 
-  const assignment = kMeansAssign(selected, numDays);
-  const byCluster: AttractionStop[][] = Array.from({ length: numDays }, () => []);
-  selected.forEach((s, i) => {
-    const c = assignment[i];
-    if (c >= 0 && c < numDays) byCluster[c].push(s);
-  });
-
-  for (let c = 0; c < numDays; c += 1) {
-    while (byCluster[c].length === 0) {
-      let bestFrom = -1;
-      let bestSize = 0;
-      for (let j = 0; j < numDays; j += 1) {
-        if (byCluster[j].length > bestSize) {
-          bestSize = byCluster[j].length;
-          bestFrom = j;
-        }
-      }
-      if (bestFrom < 0 || bestSize < 2) break;
-      const moved = byCluster[bestFrom].pop();
-      if (moved) byCluster[c].push(moved);
-    }
-  }
+  const byCluster = partitionStopsAcrossDays(selected, numDays);
 
   const seed: LatLng = {
     lat: destination.lat,
@@ -648,19 +996,19 @@ export async function buildGeneratedItineraryFromDestination(input: {
   let seqDay = 0;
   for (const clusterIdx of clusterVisitOrder) {
     const group = byCluster[clusterIdx];
-    if (group.length === 0) continue;
     const ordered = orderClusterStops(group, prevExit);
     chunkSizes.push(ordered.length);
     for (const s of ordered) {
       orderedStops.push(s);
       sequentialDayPerStop.push(seqDay);
     }
-    prevExit = ordered[ordered.length - 1];
+    if (ordered.length > 0) {
+      prevExit = ordered[ordered.length - 1];
+    }
     seqDay += 1;
   }
 
-  const itineraryDayCount = seqDay;
-  if (itineraryDayCount < 1) {
+  if (orderedStops.length < 1 || seqDay !== numDays) {
     throw new Error("Could not assign stops to days.");
   }
 
@@ -694,9 +1042,9 @@ export async function buildGeneratedItineraryFromDestination(input: {
   });
 
   const dayPlans: GeneratedDayPlanInput[] = [];
-  const placesByDay: string[][] = Array.from({ length: itineraryDayCount }, () => []);
+  const placesByDay: string[][] = Array.from({ length: numDays }, () => []);
 
-  for (let d = 0; d < itineraryDayCount; d += 1) {
+  for (let d = 0; d < numDays; d += 1) {
     const indexes: number[] = [];
     const ids: string[] = [];
     waypoints.forEach((w, globalIdx) => {
@@ -714,7 +1062,7 @@ export async function buildGeneratedItineraryFromDestination(input: {
     });
   }
 
-  const tripName = `${destination.name} · ${itineraryDayCount} day${itineraryDayCount === 1 ? "" : "s"}`;
+  const tripName = `${destination.name} · ${numDays} day${numDays === 1 ? "" : "s"}`;
 
   return { tripName, waypoints, dayPlans, placesByDay, selectedStops: selected, alternativeStops };
 }

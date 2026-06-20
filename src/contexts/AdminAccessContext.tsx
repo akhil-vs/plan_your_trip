@@ -29,11 +29,13 @@ type AdminAccessValue = {
 const AdminAccessContext = createContext<AdminAccessValue | null>(null);
 
 export function AdminAccessProvider({ children }: { children: React.ReactNode }) {
-  const { status } = useSession();
+  const { status, data: session } = useSession();
   const [isAdmin, setIsAdmin] = useState(false);
   const [ready, setReady] = useState(false);
   const [account, setAccount] = useState<AccountMe | null>(null);
   const [fetchKey, setFetchKey] = useState(0);
+
+  const sessionAdminFallback = Boolean(session?.user?.isAdmin);
 
   const refresh = useCallback(() => {
     setFetchKey((k) => k + 1);
@@ -60,24 +62,26 @@ export function AdminAccessProvider({ children }: { children: React.ReactNode })
       credentials: "same-origin",
       cache: "no-store",
     })
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.resolve(null)))
       .then((me: AccountMe | null) => {
         if (cancelled) return;
         setAccount(me);
-        setIsAdmin(Boolean(me?.isAdmin));
+        // Prefer server /me (DB email + ADMIN_EMAILS). If the route fails, keep JWT/session flag so admins are not locked out.
+        const fromMe = me && typeof me.isAdmin === "boolean" ? me.isAdmin : null;
+        setIsAdmin(fromMe !== null ? fromMe : sessionAdminFallback);
         setReady(true);
       })
       .catch(() => {
         if (cancelled) return;
         setAccount(null);
-        setIsAdmin(false);
+        setIsAdmin(sessionAdminFallback);
         setReady(true);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [status, fetchKey]);
+  }, [status, fetchKey, sessionAdminFallback]);
 
   const value = useMemo(
     () => ({ isAdmin, ready, account, refresh }),

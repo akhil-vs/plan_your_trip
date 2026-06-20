@@ -4,10 +4,17 @@ import { encode } from "next-auth/jwt";
 import { prisma } from "@/lib/prisma";
 import { AUTH_JS_SESSION_SALT, getAuthSecret } from "@/lib/api-auth";
 import { isAdminEmail } from "@/lib/admin";
+import { normalizeAuthEmail } from "@/lib/auth/normalizeEmail";
+import {
+  databaseUnavailableMessage,
+  isDatabaseUnreachable,
+} from "@/lib/prisma/errors";
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json();
+    const body = await request.json();
+    const email = normalizeAuthEmail(body.email);
+    const password = typeof body.password === "string" ? body.password : "";
     if (!email || !password) {
       return NextResponse.json(
         { error: "Email and password are required" },
@@ -52,6 +59,12 @@ export async function POST(request: NextRequest) {
       user: { id: user.id, email: user.email, name: user.name },
     });
   } catch (error) {
+    if (isDatabaseUnreachable(error)) {
+      return NextResponse.json(
+        { error: databaseUnavailableMessage() },
+        { status: 503 }
+      );
+    }
     const message = error instanceof Error ? error.message : "Login failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }

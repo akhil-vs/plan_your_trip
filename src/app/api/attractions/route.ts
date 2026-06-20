@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
+import {
+  WAYPOINT_EXPLORE_ATTRACTIONS_KINDS,
+  WAYPOINT_EXPLORE_ATTRACTIONS_LIMIT,
+  WAYPOINT_EXPLORE_ATTRACTIONS_MIN_RATE,
+  WAYPOINT_EXPLORE_RADIUS_METERS,
+} from "@/lib/opentripmap/waypointExploreParams";
 
 const normalizeCoord = (value: string) => Number.parseFloat(value).toFixed(4);
 const normalizeNumberLike = (value: string, fallback: string) => {
@@ -11,8 +17,9 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const lat = searchParams.get("lat");
   const lng = searchParams.get("lng");
-  const radius = searchParams.get("radius") || "10000";
-  const kinds = searchParams.get("kinds") || "interesting_places";
+  const defaultRadius = String(WAYPOINT_EXPLORE_RADIUS_METERS);
+  const radius = searchParams.get("radius") || defaultRadius;
+  const kinds = searchParams.get("kinds") || WAYPOINT_EXPLORE_ATTRACTIONS_KINDS;
 
   if (!lat || !lng) {
     return NextResponse.json(
@@ -32,7 +39,7 @@ export async function GET(req: NextRequest) {
   try {
     const normalizedLat = normalizeCoord(lat);
     const normalizedLng = normalizeCoord(lng);
-    const normalizedRadius = normalizeNumberLike(radius, "10000");
+    const normalizedRadius = normalizeNumberLike(radius, defaultRadius);
     const normalizedKinds = kinds.trim().toLowerCase();
     const cacheKey = ["attractions", normalizedLat, normalizedLng, normalizedRadius, normalizedKinds];
 
@@ -43,9 +50,9 @@ export async function GET(req: NextRequest) {
           lon: lng,
           lat,
           kinds,
-          rate: "2",
+          rate: String(WAYPOINT_EXPLORE_ATTRACTIONS_MIN_RATE),
           format: "json",
-          limit: "50",
+          limit: String(WAYPOINT_EXPLORE_ATTRACTIONS_LIMIT),
           apikey: apiKey,
         });
 

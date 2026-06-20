@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -82,6 +82,7 @@ function FacebookIcon({ className }: { className?: string }) {
 
 interface Trip {
   id: string;
+  userId?: string;
   name: string;
   description: string | null;
   status: "DRAFT" | "FINALIZED";
@@ -95,6 +96,13 @@ interface Trip {
   _count: { savedPlaces: number; members?: number };
 }
 
+type ExploreGem = {
+  id: string;
+  name: string;
+  categoryLabel: string;
+  regionLabel: string;
+};
+
 interface TripTemplate {
   id: string;
   name: string;
@@ -103,7 +111,7 @@ interface TripTemplate {
   waypoints: { id: string; name: string; lat: number; lng: number; order: number }[];
 }
 
-type DashboardView = "itineraries" | "published" | "collaborators" | "shared" | "archive" | "explore";
+type DashboardView = "itineraries" | "published" | "shared" | "explore";
 
 const travelVibes = [
   { label: "Beach Escapes", description: "Slow mornings, blue water, and sunset dinners.", icon: Sun },
@@ -586,6 +594,18 @@ export default function DashboardPage() {
   const [trendingFilter, setTrendingFilter] = useState("All");
   const [selectedTrendingName, setSelectedTrendingName] = useState(trendingDestinations[0]?.name ?? "");
   const [generatingTrendingName, setGeneratingTrendingName] = useState<string | null>(null);
+  const [exploreGems, setExploreGems] = useState<ExploreGem[]>([]);
+  const [exploreGemsLoading, setExploreGemsLoading] = useState(false);
+
+  const userId = session?.user?.id;
+  const ownedTrips = useMemo(
+    () => (userId ? myTrips.filter((t) => t.userId === userId) : myTrips),
+    [myTrips, userId]
+  );
+  const sharedWithMeTrips = useMemo(
+    () => (userId ? myTrips.filter((t) => t.userId && t.userId !== userId) : []),
+    [myTrips, userId]
+  );
 
   useEffect(() => {
     if (!session?.user) return;
@@ -641,6 +661,35 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [session, router]);
+
+  useEffect(() => {
+    if (searchParams.get("view") !== "explore") return;
+    let cancelled = false;
+    setExploreGemsLoading(true);
+    fetch("/api/gems?category=waterfalls&region=england&limit=8")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const rows = Array.isArray(data?.gems) ? data.gems : [];
+        setExploreGems(
+          rows.map((g: ExploreGem & { kinds?: string }) => ({
+            id: g.id,
+            name: g.name,
+            categoryLabel: g.categoryLabel,
+            regionLabel: g.regionLabel,
+          }))
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setExploreGems([]);
+      })
+      .finally(() => {
+        if (!cancelled) setExploreGemsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams]);
 
   const handleDelete = async (tripId: string) => {
     if (!confirm("Are you sure you want to delete this trip?")) return;
@@ -801,14 +850,10 @@ export default function DashboardPage() {
   const currentViewParam = searchParams.get("view");
   const currentView: DashboardView = (
     currentViewParam &&
-    ["itineraries", "published", "collaborators", "shared", "archive", "explore"].includes(
-      currentViewParam
-    )
+    ["itineraries", "published", "shared", "explore"].includes(currentViewParam)
       ? currentViewParam
       : "itineraries"
   ) as DashboardView;
-
-  const showPlaceholderView = ["collaborators", "shared", "archive"].includes(currentView);
   const filteredTrendingDestinations =
     trendingFilter === "All"
       ? trendingDestinations
@@ -824,59 +869,69 @@ export default function DashboardPage() {
           <h1 className="text-4xl font-bold tracking-tight text-slate-900">
             {currentView === "published"
               ? "Published Itineraries"
-              : currentView === "collaborators"
-                ? "Collaborators"
-                : currentView === "shared"
-                  ? "Shared Itineraries"
-                  : currentView === "archive"
-                    ? "Archive"
-                    : currentView === "explore"
-                      ? "Explore the world your way"
-                      : "Your Itineraries"}
+              : currentView === "shared"
+                ? "Shared with me"
+                : currentView === "explore"
+                  ? "Explore the world your way"
+                  : "Your Itineraries"}
           </h1>
           <p className="text-muted-foreground mt-1">
             {currentView === "published"
               ? "Browse itineraries that are visible to everyone."
-              : currentView === "collaborators"
-                ? "Manage people and permissions for group planning."
-                : currentView === "shared"
-                  ? "Trips shared with you will appear here."
-                  : currentView === "archive"
-                    ? "Archived trips can be restored whenever you need them."
-                    : currentView === "explore"
-                      ? "Discover trending destinations, hidden gems, and AI-curated travel ideas tailored to your travel style."
-                      : "Only itineraries you own or are invited to appear here—your private plans stay yours."}
+              : currentView === "shared"
+                ? "Trips where you are an editor or viewer — owned by someone else."
+                : currentView === "explore"
+                  ? "Discover trending destinations, hidden gems, and AI-curated travel ideas tailored to your travel style."
+                  : "Itineraries you created. Collaborators manage members inside each trip."}
           </p>
         </div>
 
-        {showPlaceholderView && (
-          <Card className="mb-10">
-            <CardHeader>
-              <CardTitle>
-                {currentView === "collaborators"
-                  ? "Collaboration hub coming soon"
-                  : currentView === "shared"
-                    ? "Shared itinerary view coming soon"
-                    : currentView === "archive"
-                      ? "Archive view coming soon"
-                      : "Explore hub coming soon"}
-              </CardTitle>
-              <CardDescription>
-                {currentView === "collaborators"
-                  ? "You will see teammate roles, pending invites, and collaboration activity here."
-                  : currentView === "shared"
-                    ? "Itineraries that other travelers share with you will be organized in this section."
-                    : currentView === "archive"
-                      ? "Archived itineraries will live here, with quick restore actions."
-                      : "Destination inspiration and discovery tools will appear in this section."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href="/dashboard?view=itineraries">
-                <Button size="sm">Back to My Trips</Button>
-              </Link>
-            </CardContent>
-          </Card>
+        {currentView === "shared" && (
+          loading ? (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-48 rounded-xl" />
+              ))}
+            </div>
+          ) : sharedWithMeTrips.length === 0 ? (
+            <EmptyState
+              icon={Users2}
+              title="No shared trips yet"
+              description="When someone invites you as an editor or viewer, their itinerary will show up here."
+              action={{ label: "Back to my trips", href: "/dashboard?view=itineraries" }}
+            />
+          ) : (
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-6 mb-10">
+              {sharedWithMeTrips.map((trip) => (
+                <Card
+                  key={trip.id}
+                  className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden flex flex-col p-0 gap-0"
+                  onClick={() => router.push(`/planner/${trip.id}`)}
+                >
+                  <TripCardHeaderImage waypoints={trip.waypoints} label={trip.name} />
+                  <CardHeader className="pb-3 px-4 sm:px-6 pt-4">
+                    <CardTitle className="text-lg truncate">{trip.name}</CardTitle>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <Badge variant="outline" className="gap-1">
+                        <Users2 className="h-3 w-3" />
+                        Shared
+                      </Badge>
+                      {trip.members?.[0]?.role && (
+                        <Badge variant="secondary">{trip.members[0].role}</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Owner: {trip.user?.name?.trim() || "A collaborator"}
+                    </p>
+                  </CardHeader>
+                  <CardContent className="px-4 sm:px-6 pb-4 text-sm text-muted-foreground">
+                    {trip.waypoints.length} stop{trip.waypoints.length !== 1 ? "s" : ""} · Updated{" "}
+                    {formatDate(trip.updatedAt)}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )
         )}
 
         {currentView === "explore" && (
@@ -1175,16 +1230,33 @@ export default function DashboardPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-3 sm:grid-cols-2">
-                  {hiddenGems.map((gem) => (
-                    <Link
-                      key={gem}
-                      href="/dashboard/generate"
-                      className="rounded-2xl border border-slate-100 bg-slate-50 p-4 transition-colors hover:border-indigo-200 hover:bg-indigo-50"
-                    >
-                      <p className="font-semibold text-slate-900">{gem}</p>
-                      <p className="mt-1 text-sm text-slate-500">Offbeat, memorable, and worth building around.</p>
-                    </Link>
-                  ))}
+                  {exploreGemsLoading ? (
+                    <p className="text-sm text-muted-foreground sm:col-span-2">Loading nearby places…</p>
+                  ) : exploreGems.length > 0 ? (
+                    exploreGems.map((gem) => (
+                      <Link
+                        key={gem.id}
+                        href="/dashboard/generate"
+                        className="rounded-2xl border border-slate-100 bg-slate-50 p-4 transition-colors hover:border-indigo-200 hover:bg-indigo-50"
+                      >
+                        <p className="font-semibold text-slate-900">{gem.name}</p>
+                        <p className="mt-1 text-sm text-slate-500">
+                          {gem.categoryLabel} · {gem.regionLabel}
+                        </p>
+                      </Link>
+                    ))
+                  ) : (
+                    hiddenGems.map((gem) => (
+                      <Link
+                        key={gem}
+                        href="/dashboard/generate"
+                        className="rounded-2xl border border-slate-100 bg-slate-50 p-4 transition-colors hover:border-indigo-200 hover:bg-indigo-50"
+                      >
+                        <p className="font-semibold text-slate-900">{gem}</p>
+                        <p className="mt-1 text-sm text-slate-500">Offbeat, memorable, and worth building around.</p>
+                      </Link>
+                    ))
+                  )}
                 </CardContent>
               </Card>
 
@@ -1266,7 +1338,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {!showPlaceholderView && currentView === "itineraries" && templates.length > 0 && (
+        {currentView === "itineraries" && templates.length > 0 && (
           <div className="mb-8">
             <h2 className="text-lg font-semibold text-gray-900 mb-3">Templates</h2>
             <div className="grid md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
@@ -1300,13 +1372,13 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {!showPlaceholderView && currentView === "itineraries" && (loading ? (
+        {currentView === "itineraries" && (loading ? (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(3)].map((_, i) => (
               <Skeleton key={i} className="h-48 rounded-xl" />
             ))}
           </div>
-        ) : myTrips.length === 0 ? (
+        ) : ownedTrips.length === 0 ? (
           <div className="py-8">
             <EmptyState
               icon={Route}
@@ -1343,7 +1415,7 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-6 mb-10">
-            {myTrips.map((trip) => (
+            {ownedTrips.map((trip) => (
               <Card
                 key={trip.id}
                 className="group hover:shadow-lg transition-shadow cursor-pointer overflow-hidden flex flex-col p-0 gap-0"
@@ -1482,7 +1554,7 @@ export default function DashboardPage() {
           </div>
         ))}
 
-        {!showPlaceholderView && !loading && (currentView === "itineraries" || currentView === "published") && (
+        {!loading && (currentView === "itineraries" || currentView === "published") && (
           <div className="border-t pt-8">
             <div className="mb-3">
               <h2 className="text-lg font-semibold text-gray-900">Published itineraries</h2>

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { WAYPOINT_EXPLORE_RADIUS_KM } from "@/lib/opentripmap/waypointExploreParams";
 
 export type MapStyle = "streets" | "satellite" | "outdoors";
 
@@ -74,9 +75,9 @@ export const useMapStore = create<MapState>((set) => ({
   dayStartMinutes: 9 * 60,
   dayEndMinutes: 20 * 60,
   defaultVisitMinutes: 60,
-  searchRadius: 10,
+  searchRadius: WAYPOINT_EXPLORE_RADIUS_KM,
   routeCorridorMeters: 1000,
-  sidebarOpen: true,
+  sidebarOpen: false,
   activeWaypoint: null,
   routeSummaryOpen: false,
   pickPointsMode: false,

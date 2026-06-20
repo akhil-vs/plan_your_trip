@@ -44,6 +44,8 @@ model User {
   email         String       @unique
   passwordHash  String
   plan          SubscriptionPlan @default(FREE)
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?
   /// false = show first-run onboarding (set explicitly on registration)
   onboardingComplete Boolean @default(true)
   travelPreference   String?
@@ -53,7 +55,19 @@ model User {
   templates     TripTemplate[]
   tripChatMessages TripChatMessage[]
   notifications InAppNotification[]
+  passwordResetTokens PasswordResetToken[]
   createdAt     DateTime     @default(now())
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model InAppNotification {

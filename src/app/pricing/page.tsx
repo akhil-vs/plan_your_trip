@@ -45,7 +45,7 @@ const tiers = [
     features: [
       "Everything in Free",
       "Invite editors and viewers with email",
-      "Real-time collaboration on the same itinerary",
+      "Live collaboration with sync and invites",
       "Activity timeline with who changed what",
       "Premium PDF: branding, cleaner sections, print-ready layout",
       "Deeper route and day optimisation controls",
@@ -76,7 +76,7 @@ const tiers = [
 const comparisonRows: Array<{ label: string; free: Cell; pro: Cell; team: Cell; hint?: string }> = [
   { label: "Solo planning & maps", free: true, pro: true, team: true },
   { label: "Invite collaborators", free: false, pro: true, team: true },
-  { label: "Real-time co-editing", free: false, pro: true, team: true },
+  { label: "Live itinerary sync", free: false, pro: true, team: true },
   { label: "Activity timeline & attribution", free: false, pro: true, team: true },
   {
     label: "PDF export",

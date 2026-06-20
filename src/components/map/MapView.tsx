@@ -12,6 +12,8 @@ import { MapStyleToggle } from "./MapStyleToggle";
 import { WaypointExplorePanel } from "./WaypointExplorePanel";
 import { RouteSummaryPanel } from "./RouteSummaryPanel";
 import { MapCollaborationControls } from "./MapCollaborationControls";
+import { useIsMobilePlanner } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/utils";
 
 interface MapViewProps {
   mapboxToken: string;
@@ -34,6 +36,8 @@ export function MapView({ mapboxToken }: MapViewProps) {
   const waypoints = useTripStore((s) => s.waypoints);
   const route = useTripStore((s) => s.route);
   const tripId = useTripStore((s) => s.tripId);
+  const isMobile = useIsMobilePlanner();
+  const hideMapChrome = isMobile && sidebarOpen;
 
   const handleMove = useCallback(
     (evt: { viewState: typeof viewState }) => {
@@ -126,12 +130,17 @@ export function MapView({ mapboxToken }: MapViewProps) {
         [maxLng, maxLat],
       ],
       {
-        padding: { top: 72, bottom: 72, left: sidebarOpen ? 420 : 72, right: 72 },
+        padding: {
+          top: 72,
+          bottom: 72,
+          left: !isMobile && sidebarOpen ? 420 : 72,
+          right: 72,
+        },
         duration: 650,
       }
     );
     autoFitModeRef.current = nextFitMode;
-  }, [mapLoaded, route, sidebarOpen, waypoints]);
+  }, [mapLoaded, route, sidebarOpen, waypoints, isMobile]);
 
   return (
     <div className="map-view-root relative w-full h-full min-h-0 overflow-hidden">
@@ -184,7 +193,12 @@ export function MapView({ mapboxToken }: MapViewProps) {
           </div>
         </div>
       )}
-      <div className="pointer-events-none absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 z-[50] flex max-w-[min(100%,calc(100vw-4.5rem))] flex-row items-start justify-end gap-1.5 sm:top-4 sm:right-4 lg:flex-col lg:max-w-[calc(100vw-1rem)]">
+      <div
+        className={cn(
+          "pointer-events-none absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 z-[50] flex max-w-[min(100%,calc(100vw-4.5rem))] flex-row items-start justify-end gap-1.5 sm:top-4 sm:right-4 lg:flex-col lg:max-w-[calc(100vw-1rem)]",
+          hideMapChrome && "max-lg:hidden"
+        )}
+      >
         <div className="pointer-events-auto flex flex-row items-start gap-1.5 lg:flex-col">
           <MapStyleToggle />
           <RouteSummaryPanel />

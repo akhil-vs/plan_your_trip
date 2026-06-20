@@ -1,8 +1,17 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { isAdminEmail } from "@/lib/admin";
+import { normalizeAuthEmail } from "@/lib/auth/normalizeEmail";
+import { SIGN_IN_ERROR_CODES } from "@/lib/auth/signInResultMessage";
+import { isDatabaseUnreachable } from "@/lib/prisma/errors";
+
+function throwCredentialsSignIn(code: string): never {
+  const err = new CredentialsSignin();
+  err.code = code;
+  throw err;
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   // Use the request Host (e.g. localhost:3001) instead of a fixed NEXTAUTH_URL port for redirects.
@@ -15,25 +24,38 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        const email = normalizeAuthEmail(credentials?.email);
+        const password =
+          typeof credentials?.password === "string" ? credentials.password : "";
+        if (!email || !password) return null;
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string },
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            passwordHash: true,
-            plan: true,
-          },
-        });
+        let user;
+        try {
+          user = await prisma.user.findUnique({
+            where: { email },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              passwordHash: true,
+              plan: true,
+            },
+          });
+        } catch (e) {
+          if (isDatabaseUnreachable(e)) {
+            throwCredentialsSignIn(SIGN_IN_ERROR_CODES.databaseUnavailable);
+          }
+          throwCredentialsSignIn(SIGN_IN_ERROR_CODES.serviceError);
+        }
 
         if (!user) return null;
 
-        const isValid = await compare(
-          credentials.password as string,
-          user.passwordHash
-        );
+        let isValid: boolean;
+        try {
+          isValid = await compare(password, user.passwordHash);
+        } catch {
+          throwCredentialsSignIn(SIGN_IN_ERROR_CODES.serviceError);
+        }
 
         if (!isValid) return null;
 
@@ -67,11 +89,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       // Legacy JWTs may lack email; hydrate once so ADMIN_EMAILS / isAdmin work.
       if (!token.email && typeof token.id === "string") {
-        const row = await prisma.user.findUnique({
-          where: { id: token.id },
-          select: { email: true },
-        });
-        if (row?.email) token.email = row.email;
+        try {
+          const row = await prisma.user.findUnique({
+            where: { id: token.id },
+            select: { email: true },
+          });
+          if (row?.email) token.email = row.email;
+        } catch {
+          // DB down: avoid failing the whole sign-in with a generic Configuration error.
+        }
       }
       // Keep admin flag in sync on every request (matches ADMIN_EMAILS in env).
       if (typeof token.email === "string" && token.email.length > 0) {

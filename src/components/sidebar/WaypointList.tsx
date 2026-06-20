@@ -19,7 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useTripStore, WaypointData } from "@/stores/tripStore";
 import { useMapStore } from "@/stores/mapStore";
-import { GripVertical, Loader2, MapPin, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { GripVertical, Landmark, Loader2, MapPin, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -165,7 +165,7 @@ function SortableWaypoint({
   const removeWaypoint = useTripStore((s) => s.removeWaypoint);
   const reorderWaypoints = useTripStore((s) => s.reorderWaypoints);
   const updateWaypoint = useTripStore((s) => s.updateWaypoint);
-  const { setViewState } = useMapStore();
+  const { setActiveWaypoint, setViewState } = useMapStore();
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: wp.id, disabled });
 
@@ -178,6 +178,11 @@ function SortableWaypoint({
 
   const centerOnStop = () => {
     setViewState({ longitude: wp.lng, latitude: wp.lat, zoom: 12 });
+  };
+
+  const openNearbyAttractions = () => {
+    centerOnStop();
+    setActiveWaypoint({ id: wp.id, name: wp.name, lat: wp.lat, lng: wp.lng, index });
   };
 
   return (
@@ -204,6 +209,24 @@ function SortableWaypoint({
           </p>
         </button>
         <div className="flex shrink-0 items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Explore attractions near ${wp.name}`}
+                className="h-8 w-8 shrink-0 text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+                disabled={disabled}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openNearbyAttractions();
+                }}
+              >
+                <Landmark className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">Explore nearby attractions</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

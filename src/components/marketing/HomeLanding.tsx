@@ -60,9 +60,9 @@ const features = [
   },
   {
     icon: MessagesSquare,
-    title: "Real-time collaboration",
+    title: "Live collaboration",
     description:
-      "Invite editors, follow activity, and keep one itinerary everyone trusts—no more “which version is latest?”",
+      "Invite editors, see activity as saves land, and keep one itinerary everyone trusts—no more “which version is latest?”",
     iconWrap: "bg-rose-100 text-rose-700",
   },
 ];
@@ -108,7 +108,7 @@ const pricingTiers = [
     highlight: true,
     features: [
       "Everything in Free",
-      "Real-time collaboration and invites",
+      "Live collaboration, invites, and sync",
       "Activity timeline with attribution",
       "Premium PDF layout and branding",
       "Advanced itinerary optimization controls",
@@ -176,7 +176,7 @@ const testimonialColumns: Array<
     },
     {
       quote:
-        "The offline mode saved us in the Alps when signal disappeared—we still had the route, stops, and notes in our pockets.",
+        "Exporting the PDF before we left meant everyone had stops and notes even when signal dropped in the Alps.",
       name: "Sarah Jenkins",
       role: "Adventure traveler",
       avatarClass: "bg-blue-600 text-white",
@@ -291,9 +291,9 @@ export function HomeLanding() {
             </h2>
             <FadeIn>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-10 sm:gap-8 text-center">
-                <StatCounter end={12000} suffix="+" label="Routes created" />
-                <StatCounter end={195} suffix="+" label="Countries supported" />
-                <StatCounter end={4.9} decimals={1} suffix="★" label="Average rating" />
+                <StatCounter end={50} suffix="+" label="Countries on the map" />
+                <StatCounter end={6} label="Core planning tools" />
+                <StatCounter end={3} label="Plans for every trip" />
               </div>
             </FadeIn>
           </div>
@@ -731,9 +731,14 @@ export function HomeLanding() {
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Legal</p>
               <ul className="space-y-2.5">
                 <li>
-                  <a href="mailto:hello@viazo.app?subject=Legal%20%2F%20privacy" className="hover:text-white transition-colors">
-                    Privacy & terms inquiries
-                  </a>
+                  <Link href="/legal/privacy" className="hover:text-white transition-colors">
+                    Privacy policy
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/legal/terms" className="hover:text-white transition-colors">
+                    Terms of service
+                  </Link>
                 </li>
               </ul>
             </div>

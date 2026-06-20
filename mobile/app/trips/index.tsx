@@ -125,6 +125,7 @@ export default function TripsScreen() {
   const [genQuery, setGenQuery] = useState("");
   const [genSuggestions, setGenSuggestions] = useState<LocationSearchResult[]>([]);
   const [genSuggesting, setGenSuggesting] = useState(false);
+  const [genSuggestionsOpen, setGenSuggestionsOpen] = useState(false);
   const [genPick, setGenPick] = useState<LocationSearchResult | null>(null);
   const [genDays, setGenDays] = useState("3");
   const [genPace, setGenPace] = useState<"relaxed" | "moderate" | "packed">("moderate");
@@ -188,14 +189,21 @@ export default function TripsScreen() {
     if (q.length < 3 || createMode !== "generate") {
       setGenSuggestions([]);
       setGenSuggesting(false);
+      setGenSuggestionsOpen(false);
       return;
     }
     const t = setTimeout(() => {
       setGenSuggesting(true);
       void api
-        .searchLocations(q, undefined, { limit: 8 })
-        .then((rows) => setGenSuggestions(rows))
-        .catch(() => setGenSuggestions([]))
+        .searchLocations(q, undefined, { limit: 8, context: "generate" })
+        .then((rows) => {
+          setGenSuggestions(rows);
+          setGenSuggestionsOpen(rows.length > 0);
+        })
+        .catch(() => {
+          setGenSuggestions([]);
+          setGenSuggestionsOpen(false);
+        })
         .finally(() => setGenSuggesting(false));
     }, 350);
     return () => clearTimeout(t);
@@ -216,6 +224,7 @@ export default function TripsScreen() {
       setCreating(true);
       const result = await api.generateTripFromDestination({
         destination: label,
+        ...(genPick?.id ? { mapboxId: genPick.id } : {}),
         days: n,
         pace: genPace,
       });
@@ -549,41 +558,68 @@ export default function TripsScreen() {
                 ) : (
                   <>
                     <Text style={styles.fieldLabel}>Destination</Text>
-                    <TextInput
-                      placeholder="Search city or region…"
-                      placeholderTextColor={colors.textMuted}
-                      value={genQuery}
-                      onChangeText={(t) => {
-                        setGenQuery(t);
-                        setGenPick(null);
-                      }}
-                      style={styles.genSearchInput}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
-                    {genSuggesting ? <ActivityIndicator size="small" color={colors.brandPrimary} style={{ marginVertical: 8 }} /> : null}
-                    <ScrollView style={{ maxHeight: 160 }} keyboardShouldPersistTaps="handled">
-                      {genSuggestions.map((s) => (
-                        <Pressable
-                          key={s.id}
-                          style={[styles.genSuggestionRow, genPick?.id === s.id && styles.genSuggestionRowActive]}
-                          onPress={() => {
-                            setGenPick(s);
-                            setGenQuery(s.name);
-                            setGenSuggestions([]);
-                          }}
-                        >
-                          <Text style={styles.rowTitle} numberOfLines={1}>
-                            {s.name}
-                          </Text>
-                          {s.fullName ? (
-                            <Text style={styles.publicCardMeta} numberOfLines={1}>
-                              {s.fullName}
-                            </Text>
-                          ) : null}
-                        </Pressable>
-                      ))}
-                    </ScrollView>
+                    <Text style={[type.caption, { marginBottom: space.sm }]}>
+                      Search a city or region — we plan across the whole area, not just one pin.
+                    </Text>
+                    <View style={styles.genSearchWrap}>
+                      <TextInput
+                        placeholder="Search city, region, or landmark…"
+                        placeholderTextColor={colors.textMuted}
+                        value={genQuery}
+                        onChangeText={(t) => {
+                          setGenQuery(t);
+                          setGenPick(null);
+                          if (t.trim().length < 3) setGenSuggestionsOpen(false);
+                        }}
+                        onFocus={() => {
+                          if (genSuggestions.length > 0) setGenSuggestionsOpen(true);
+                        }}
+                        style={styles.genSearchInput}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      {genSuggesting ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={colors.brandPrimary}
+                          style={styles.genSearchSpinner}
+                        />
+                      ) : null}
+                      {genSuggestionsOpen && genSuggestions.length > 0 ? (
+                        <View style={styles.genSuggestionsPanel}>
+                          <ScrollView
+                            style={styles.genSuggestionsScroll}
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                          >
+                            {genSuggestions.map((s) => (
+                              <Pressable
+                                key={s.id}
+                                style={[
+                                  styles.genSuggestionRow,
+                                  genPick?.id === s.id && styles.genSuggestionRowActive,
+                                ]}
+                                onPress={() => {
+                                  setGenPick(s);
+                                  setGenQuery(s.name);
+                                  setGenSuggestions([]);
+                                  setGenSuggestionsOpen(false);
+                                }}
+                              >
+                                <Text style={styles.rowTitle} numberOfLines={1}>
+                                  {s.name}
+                                </Text>
+                                {s.fullName ? (
+                                  <Text style={styles.publicCardMeta} numberOfLines={1}>
+                                    {s.fullName}
+                                  </Text>
+                                ) : null}
+                              </Pressable>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      ) : null}
+                    </View>
                     <TextField label="Days (1–14)" value={genDays} onChangeText={setGenDays} keyboardType="number-pad" />
                     <Text style={styles.fieldLabel}>Pace</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
@@ -1007,6 +1043,11 @@ const styles = StyleSheet.create({
     padding: space.md,
     backgroundColor: "#fff",
   },
+  genSearchWrap: {
+    position: "relative",
+    zIndex: 20,
+    marginBottom: space.md,
+  },
   genSearchInput: {
     borderWidth: 1,
     borderColor: colors.borderStrong,
@@ -1016,6 +1057,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.text,
     backgroundColor: colors.surface,
+  },
+  genSearchSpinner: {
+    position: "absolute",
+    right: 12,
+    top: 14,
+  },
+  genSuggestionsPanel: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "100%",
+    marginTop: 4,
+    maxHeight: 220,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: radius.md,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  genSuggestionsScroll: {
+    maxHeight: 220,
   },
   genSuggestionRow: {
     paddingVertical: 10,

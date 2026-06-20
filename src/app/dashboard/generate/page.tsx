@@ -1,19 +1,21 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
   Loader2,
-  MapPin,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { searchLocations, type SearchResult } from "@/lib/api/mapbox";
 import { toast } from "@/lib/toast";
+import {
+  DestinationSearchInput,
+  type DestinationSearchSelection,
+} from "@/components/destination/DestinationSearchInput";
 
 type Pace = "relaxed" | "moderate" | "packed";
 type RankingStyle = "most_popular" | "best_spread" | "hidden_gems";
@@ -510,27 +512,201 @@ const POPULAR_DESTINATIONS: PopularDestination[] = [
       ] },
     ],
   },
+  {
+    name: "London",
+    country: "United Kingdom",
+    lat: 51.5074,
+    lng: -0.1278,
+    suggestedDays: 5,
+    planDays: [
+      { title: "Westminster core", summary: "Royal landmarks and Parliament along the Thames.", stops: [
+        { name: "Westminster Abbey", lat: 51.4994, lng: -0.1273, category: "historic" },
+        { name: "Palace of Westminster", lat: 51.4995, lng: -0.1248, category: "landmark" },
+        { name: "London Eye", lat: 51.5033, lng: -0.1196, category: "viewpoint" },
+      ] },
+      { title: "City and Tower", summary: "Roman roots, skyscrapers, and Tower history.", stops: [
+        { name: "Tower of London", lat: 51.5081, lng: -0.0759, category: "historic" },
+        { name: "Tower Bridge", lat: 51.5055, lng: -0.0754, category: "landmark" },
+        { name: "St Paul's Cathedral", lat: 51.5138, lng: -0.0984, category: "historic" },
+      ] },
+      { title: "Museums and parks", summary: "World-class collections and royal green space.", stops: [
+        { name: "British Museum", lat: 51.5194, lng: -0.1270, category: "museum" },
+        { name: "Hyde Park", lat: 51.5073, lng: -0.1657, category: "park" },
+        { name: "Victoria and Albert Museum", lat: 51.4966, lng: -0.1722, category: "museum" },
+      ] },
+      { title: "Soho and Covent Garden", summary: "Theatre, markets, and dining hubs.", stops: [
+        { name: "Covent Garden", lat: 51.5118, lng: -0.1242, category: "shopping" },
+        { name: "Leicester Square", lat: 51.5105, lng: -0.1296, category: "square" },
+        { name: "Piccadilly Circus", lat: 51.5101, lng: -0.1342, category: "landmark" },
+      ] },
+      { title: "Greenwich and markets", summary: "Meridian line, maritime history, and street food.", stops: [
+        { name: "Royal Observatory Greenwich", lat: 51.4769, lng: -0.0005, category: "museum" },
+        { name: "Cutty Sark", lat: 51.4829, lng: -0.0097, category: "historic" },
+        { name: "Borough Market", lat: 51.5055, lng: -0.0910, category: "food" },
+      ] },
+    ],
+  },
+  {
+    name: "Lisbon",
+    country: "Portugal",
+    lat: 38.7223,
+    lng: -9.1393,
+    suggestedDays: 4,
+    planDays: [
+      { title: "Alfama and viewpoints", summary: "Hill streets, tiles, and sunset miradouros.", stops: [
+        { name: "São Jorge Castle", lat: 38.7139, lng: -9.1335, category: "historic" },
+        { name: "Miradouro da Senhora do Monte", lat: 38.7195, lng: -9.1337, category: "viewpoint" },
+        { name: "Se Cathedral Lisbon", lat: 38.7099, lng: -9.1335, category: "historic" },
+      ] },
+      { title: "Belém classics", summary: "Monastery, tower, and iconic custard tarts.", stops: [
+        { name: "Jerónimos Monastery", lat: 38.6979, lng: -9.2064, category: "historic" },
+        { name: "Belém Tower", lat: 38.6916, lng: -9.2160, category: "landmark" },
+        { name: "Pastéis de Belém", lat: 38.6975, lng: -9.2034, category: "food" },
+      ] },
+      { title: "Baixa and Chiado", summary: "Elevators, squares, and cafe culture.", stops: [
+        { name: "Santa Justa Lift", lat: 38.7123, lng: -9.1394, category: "landmark" },
+        { name: "Praça do Comércio", lat: 38.7078, lng: -9.1366, category: "square" },
+        { name: "Carmo Convent", lat: 38.7125, lng: -9.1397, category: "historic" },
+      ] },
+      { title: "Sintra day", summary: "Palaces and gardens in the hills.", stops: [
+        { name: "Pena Palace", lat: 38.7876, lng: -9.3906, category: "palace" },
+        { name: "Quinta da Regaleira", lat: 38.7963, lng: -9.3965, category: "garden" },
+        { name: "Sintra Historic Centre", lat: 38.8029, lng: -9.3817, category: "town" },
+      ] },
+    ],
+  },
+  {
+    name: "Prague",
+    country: "Czech Republic",
+    lat: 50.0755,
+    lng: 14.4378,
+    suggestedDays: 4,
+    planDays: [
+      { title: "Old Town heart", summary: "Astronomical clock, squares, and lanes.", stops: [
+        { name: "Old Town Square Prague", lat: 50.0875, lng: 14.4213, category: "square" },
+        { name: "Prague Astronomical Clock", lat: 50.0870, lng: 14.4208, category: "landmark" },
+        { name: "Charles Bridge", lat: 50.0865, lng: 14.4114, category: "landmark" },
+      ] },
+      { title: "Castle district", summary: "Cathedral, palace complex, and gardens.", stops: [
+        { name: "Prague Castle", lat: 50.0910, lng: 14.4014, category: "historic" },
+        { name: "St Vitus Cathedral", lat: 50.0908, lng: 14.4007, category: "historic" },
+        { name: "Golden Lane", lat: 50.0918, lng: 14.4036, category: "historic" },
+      ] },
+      { title: "Jewish Quarter and river", summary: "Synagogues, cemetery, and waterfront walks.", stops: [
+        { name: "Old Jewish Cemetery Prague", lat: 50.0899, lng: 14.4174, category: "historic" },
+        { name: "Spanish Synagogue", lat: 50.0898, lng: 14.4187, category: "museum" },
+        { name: "Kampa Island", lat: 50.0847, lng: 14.4088, category: "park" },
+      ] },
+      { title: "Vyšehrad and views", summary: "Fortress walls and cemetery with city panoramas.", stops: [
+        { name: "Vyšehrad Fortress", lat: 50.0644, lng: 14.4199, category: "historic" },
+        { name: "Vyšehrad Cemetery", lat: 50.0656, lng: 14.4185, category: "historic" },
+        { name: "Petřín Lookout Tower", lat: 50.0835, lng: 14.3951, category: "viewpoint" },
+      ] },
+    ],
+  },
+  {
+    name: "Seoul",
+    country: "South Korea",
+    lat: 37.5665,
+    lng: 126.9780,
+    suggestedDays: 5,
+    planDays: [
+      { title: "Royal Seoul", summary: "Palaces and traditional quarters.", stops: [
+        { name: "Gyeongbokgung Palace", lat: 37.5796, lng: 126.9770, category: "palace" },
+        { name: "Bukchon Hanok Village", lat: 37.5826, lng: 126.9830, category: "neighborhood" },
+        { name: "Insadong", lat: 37.5735, lng: 126.9868, category: "shopping" },
+      ] },
+      { title: "Markets and river", summary: "Street food, crafts, and Hangang evening.", stops: [
+        { name: "Gwangjang Market", lat: 37.5701, lng: 127.0016, category: "food" },
+        { name: "N Seoul Tower", lat: 37.5512, lng: 126.9882, category: "viewpoint" },
+        { name: "Banpo Hangang Park", lat: 37.5077, lng: 126.9946, category: "park" },
+      ] },
+      { title: "Gangnam and modern culture", summary: "Shopping streets and design-forward districts.", stops: [
+        { name: "COEX Mall", lat: 37.5119, lng: 127.0594, category: "shopping" },
+        { name: "Bongeunsa Temple", lat: 37.5145, lng: 127.0572, category: "temple" },
+        { name: "Garosu-gil", lat: 37.5216, lng: 127.0225, category: "shopping" },
+      ] },
+      { title: "History and museums", summary: "War memorial, national museum, and international dining.", stops: [
+        { name: "War Memorial of Korea", lat: 37.5367, lng: 126.9771, category: "museum" },
+        { name: "National Museum of Korea", lat: 37.5241, lng: 126.9804, category: "museum" },
+        { name: "Itaewon", lat: 37.5345, lng: 126.9946, category: "food" },
+      ] },
+      { title: "Hongdae and farewell", summary: "Youth culture, cafes, and live energy.", stops: [
+        { name: "Hongdae", lat: 37.5563, lng: 126.9236, category: "neighborhood" },
+        { name: "Yeouido Hangang Park", lat: 37.5265, lng: 126.9326, category: "park" },
+        { name: "Myeongdong", lat: 37.5636, lng: 126.9834, category: "shopping" },
+      ] },
+    ],
+  },
+  {
+    name: "Sydney",
+    country: "Australia",
+    lat: -33.8688,
+    lng: 151.2093,
+    suggestedDays: 5,
+    planDays: [
+      { title: "Harbour icons", summary: "Opera House, bridge, and Rocks history.", stops: [
+        { name: "Sydney Opera House", lat: -33.8568, lng: 151.2153, category: "landmark" },
+        { name: "Sydney Harbour Bridge", lat: -33.8523, lng: 151.2108, category: "landmark" },
+        { name: "The Rocks", lat: -33.8596, lng: 151.2080, category: "historic" },
+      ] },
+      { title: "Coastal walks", summary: "Bondi to Coogee scenery.", stops: [
+        { name: "Bondi Beach", lat: -33.8915, lng: 151.2767, category: "beach" },
+        { name: "Bondi to Coogee Walk", lat: -33.9036, lng: 151.2576, category: "walk" },
+        { name: "Coogee Beach", lat: -33.9190, lng: 151.2555, category: "beach" },
+      ] },
+      { title: "City gardens and galleries", summary: "Royal Botanic Garden and major museums.", stops: [
+        { name: "Royal Botanic Garden Sydney", lat: -33.8642, lng: 151.2166, category: "garden" },
+        { name: "Art Gallery of New South Wales", lat: -33.8689, lng: 151.2173, category: "museum" },
+        { name: "Australian Museum", lat: -33.8742, lng: 151.2144, category: "museum" },
+      ] },
+      { title: "Blue Mountains day", summary: "Escarpment views and scenic villages.", stops: [
+        { name: "Echo Point Lookout", lat: -33.7188, lng: 150.3137, category: "viewpoint" },
+        { name: "Scenic World Blue Mountains", lat: -33.7368, lng: 150.2989, category: "viewpoint" },
+        { name: "Leura Village", lat: -33.7088, lng: 150.3316, category: "town" },
+      ] },
+      { title: "Darling Harbour wrap-up", summary: "Aquarium zone, dining, and evening lights.", stops: [
+        { name: "Darling Harbour", lat: -33.8737, lng: 151.2006, category: "waterfront" },
+        { name: "Barangaroo Reserve", lat: -33.8595, lng: 151.2019, category: "park" },
+        { name: "Queen Victoria Building", lat: -33.8719, lng: 151.2067, category: "shopping" },
+      ] },
+    ],
+  },
+  {
+    name: "Mexico City",
+    country: "Mexico",
+    lat: 19.4326,
+    lng: -99.1332,
+    suggestedDays: 5,
+    planDays: [
+      { title: "Historic centre", summary: "Zócalo, cathedral, and Aztec foundations.", stops: [
+        { name: "Zócalo Mexico City", lat: 19.4326, lng: -99.1332, category: "square" },
+        { name: "Metropolitan Cathedral Mexico City", lat: 19.4342, lng: -99.1332, category: "historic" },
+        { name: "Templo Mayor", lat: 19.4345, lng: -99.1312, category: "historic" },
+      ] },
+      { title: "Chapultepec", summary: "Castle, park lake, and anthropology.", stops: [
+        { name: "Chapultepec Castle", lat: 19.4205, lng: -99.1817, category: "museum" },
+        { name: "National Museum of Anthropology", lat: 19.4260, lng: -99.1862, category: "museum" },
+        { name: "Chapultepec Lake", lat: 19.4119, lng: -99.1878, category: "park" },
+      ] },
+      { title: "Coyoacán and Frida", summary: "Colonial squares and Casa Azul.", stops: [
+        { name: "Frida Kahlo Museum", lat: 19.3550, lng: -99.1628, category: "museum" },
+        { name: "Coyoacán Historic Centre", lat: 19.3476, lng: -99.1619, category: "neighborhood" },
+        { name: "Viveros de Coyoacán", lat: 19.3498, lng: -99.1548, category: "park" },
+      ] },
+      { title: "Teotihuacán day", summary: "Pyramids and ancient avenues.", stops: [
+        { name: "Pyramid of the Sun", lat: 19.6925, lng: -98.8437, category: "historic" },
+        { name: "Pyramid of the Moon", lat: 19.6997, lng: -98.8441, category: "historic" },
+        { name: "Museo de Sitio Teotihuacán", lat: 19.6897, lng: -98.8438, category: "museum" },
+      ] },
+      { title: "Roma and Condesa", summary: "Tree-lined avenues, cafes, and architecture.", stops: [
+        { name: "Parque México", lat: 19.4116, lng: -99.1678, category: "park" },
+        { name: "Parque España", lat: 19.4115, lng: -99.1746, category: "park" },
+        { name: "Mercado Roma", lat: 19.4197, lng: -99.1647, category: "food" },
+      ] },
+    ],
+  },
 ];
-
-const STREET_WORDS = [
-  "street",
-  "road",
-  "rd",
-  "st",
-  "ave",
-  "avenue",
-  "highway",
-  "blvd",
-  "lane",
-  "drive",
-  "boulevard",
-];
-
-function looksLikeRoadName(v: string): boolean {
-  const lower = v.toLowerCase();
-  if (/\d/.test(lower) && STREET_WORDS.some((w) => lower.includes(` ${w}`))) return true;
-  return STREET_WORDS.some((w) => lower === w || lower.endsWith(` ${w}`));
-}
 
 function toRad(v: number) {
   return (v * Math.PI) / 180;
@@ -558,8 +734,6 @@ export default function GenerateTripPage() {
   const [pace, setPace] = useState<Pace>("moderate");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [suggesting, setSuggesting] = useState(false);
   const [destination, setDestination] = useState<Destination | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -569,6 +743,8 @@ export default function GenerateTripPage() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [hasManualSwaps, setHasManualSwaps] = useState(false);
   const [loadingPopularKey, setLoadingPopularKey] = useState<string | null>(null);
+  const [showAllPopular, setShowAllPopular] = useState(false);
+  const popularSectionRef = useRef<HTMLElement | null>(null);
 
   async function createPopularTrip(d: PopularDestination) {
     const key = `${d.name}-${d.country}`;
@@ -576,7 +752,6 @@ export default function GenerateTripPage() {
     setDestination(d);
     setQuery(d.name);
     setDays(String(d.suggestedDays));
-    setResults([]);
     setSelectedStops([]);
     setAlternativeStops([]);
     setHasManualSwaps(false);
@@ -632,40 +807,52 @@ export default function GenerateTripPage() {
     );
   }, []);
 
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 3) {
-      setResults([]);
-      setSuggesting(false);
+  const popularSortedAll = useMemo(() => {
+    if (!userLocation) return [...POPULAR_DESTINATIONS];
+    return [...POPULAR_DESTINATIONS].sort(
+      (a, b) => haversineKm(userLocation, a) - haversineKm(userLocation, b)
+    );
+  }, [userLocation]);
+
+  const popularDisplayed = useMemo(
+    () => (showAllPopular ? popularSortedAll : popularSortedAll.slice(0, 8)),
+    [popularSortedAll, showAllPopular]
+  );
+
+  const canTogglePopularViewAll = popularSortedAll.length > 8;
+
+  function handlePopularViewToggle() {
+    if (showAllPopular) {
+      setShowAllPopular(false);
       return;
     }
-    const timer = setTimeout(async () => {
-      setSuggesting(true);
-      try {
-        const rows = await searchLocations(q, userLocation ? { lng: userLocation.lng, lat: userLocation.lat } : undefined);
-        const filtered = rows.filter((r) => !looksLikeRoadName(r.name)).slice(0, 8);
-        setResults(filtered);
-      } catch {
-        setResults([]);
-      } finally {
-        setSuggesting(false);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query, userLocation]);
-
-  const popularByLocation = useMemo(() => {
-    if (!userLocation) return POPULAR_DESTINATIONS.slice(0, 8);
-    return [...POPULAR_DESTINATIONS]
-      .sort(
-        (a, b) =>
-          haversineKm(userLocation, a) - haversineKm(userLocation, b)
-      )
-      .slice(0, 8);
-  }, [userLocation]);
+    setShowAllPopular(true);
+    queueMicrotask(() => {
+      popularSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   const selectedLabel = destination?.name || query.trim();
   const selectedMapboxId = destination?.mapboxId;
+
+  function handleDestinationChange(selection: DestinationSearchSelection | null) {
+    if (!selection) {
+      setDestination(null);
+      return;
+    }
+    setDestination({
+      mapboxId: selection.mapboxId,
+      name: selection.name,
+      country: "",
+      lat: selection.lat,
+      lng: selection.lng,
+      suggestedDays: Number.parseInt(days, 10) || 3,
+    });
+    setQuery(selection.name);
+    setSelectedStops([]);
+    setAlternativeStops([]);
+    setHasManualSwaps(false);
+  }
 
   async function loadAreaSuggestions() {
     const n = Number.parseInt(days, 10);
@@ -781,17 +968,27 @@ export default function GenerateTripPage() {
                 >
                   Destination
                 </Label>
-                <Input
-                  id="destination-search"
-                  placeholder="Where do you want to go?"
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                    setDestination(null);
-                    setHasManualSwaps(false);
-                  }}
-                  className="mt-2 min-h-14 rounded-xl border-slate-300 px-4 text-lg"
+                <DestinationSearchInput
+                  inputId="destination-search"
+                  className="mt-2"
+                  value={
+                    destination?.mapboxId
+                      ? {
+                          mapboxId: destination.mapboxId,
+                          name: destination.name,
+                          fullName: destination.name,
+                          lat: destination.lat,
+                          lng: destination.lng,
+                        }
+                      : null
+                  }
+                  onChange={handleDestinationChange}
+                  proximity={userLocation ? { lng: userLocation.lng, lat: userLocation.lat } : undefined}
+                  placeholder="Search city, region, or landmark…"
                 />
+                <p className="mt-2 text-xs text-slate-500">
+                  Pick a city or region to plan across the whole area — landmarks include nearby stops too.
+                </p>
               </div>
               <div className="lg:col-span-2">
                 <Label
@@ -881,117 +1078,91 @@ export default function GenerateTripPage() {
             </div>
           </div>
 
-          {suggesting && <p className="mt-3 text-xs text-slate-500">Searching places...</p>}
-          {results.length > 0 && (
-            <div className="mt-3 overflow-hidden rounded-xl border bg-white">
-              {results.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => {
-                    setDestination({
-                      mapboxId: r.id,
-                      name: r.name,
-                      country: "",
-                      lat: r.lat ?? 0,
-                      lng: r.lng ?? 0,
-                      suggestedDays: Number.parseInt(days, 10) || 3,
-                    });
-                    setQuery(r.name);
-                    setResults([]);
-                    setSelectedStops([]);
-                    setAlternativeStops([]);
-                    setHasManualSwaps(false);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50"
-                >
-                  <MapPin className="h-4 w-4 text-blue-600" />
-                  <span className="min-w-0">
-                    <span className="block truncate">{r.name}</span>
-                    {r.fullName && r.fullName !== r.name ? (
-                      <span className="block truncate text-xs text-slate-500">{r.fullName}</span>
-                    ) : null}
-                  </span>
-                </button>
-              ))}
+          <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="min-w-0 text-base font-semibold text-slate-800">Area coverage suggestions</h2>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => void loadAreaSuggestions()}
+                disabled={loadingPreview}
+              >
+                {loadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
+              </Button>
             </div>
-          )}
-
-          <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-800">Area coverage suggestions</h2>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void loadAreaSuggestions()}
-              disabled={loadingPreview}
-            >
-              {loadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
-            </Button>
-          </div>
-          <p className="mb-3 text-xs text-slate-500">
-            Selected points are used for the trip. Swap with alternatives to customize.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border p-3">
-              <p className="mb-2 text-xs font-semibold text-slate-700">Selected points</p>
-              <div className="max-h-52 space-y-1.5 overflow-auto">
-                {selectedStops.map((s, idx) => (
-                  <button
-                    key={`${s.name}-${s.lat}-${s.lng}`}
-                    type="button"
-                    onClick={() => setSelectedIndex(idx)}
-                    className={`w-full rounded-md border px-2.5 py-2 text-left text-sm ${
-                      idx === selectedIndex ? "border-blue-500 bg-blue-50" : "border-slate-200"
-                    }`}
-                  >
-                    <div className="truncate">{s.name}</div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500">
-                      {typeof s.popularityScore === "number"
-                        ? `Popularity ${s.popularityScore.toFixed(1)}`
-                        : "Popularity n/a"}
-                      {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
-                    </div>
-                  </button>
-                ))}
-                {selectedStops.length === 0 && (
-                  <p className="text-xs text-slate-500">Pick destination to load.</p>
-                )}
-              </div>
-            </div>
-            <div className="rounded-lg border p-3">
-              <p className="mb-2 text-xs font-semibold text-slate-700">
-                Popular alternatives in this area
-              </p>
-              <div className="max-h-52 space-y-1.5 overflow-auto">
-                {alternativeStops.map((s, idx) => (
-                  <div
-                    key={`${s.name}-${s.lat}-${s.lng}`}
-                    className="rounded-md border border-slate-200 px-2.5 py-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm text-slate-800">{s.name}</p>
-                        <p className="truncate text-xs text-slate-500">
-                          {typeof s.popularityScore === "number"
-                            ? `Popularity ${s.popularityScore.toFixed(1)}`
-                            : "Popularity n/a"}
-                          {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
-                        </p>
+            <p className="mb-4 text-xs text-slate-500">
+              Selected points are used for the trip. Swap with alternatives to customize.
+            </p>
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <div className="min-w-0 overflow-hidden rounded-lg border p-3">
+                <p className="mb-2 text-xs font-semibold text-slate-700">Selected points</p>
+                <div className="max-h-60 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden pr-1">
+                  {selectedStops.map((s, idx) => (
+                    <button
+                      key={`${s.name}-${s.lat}-${s.lng}`}
+                      type="button"
+                      onClick={() => setSelectedIndex(idx)}
+                      className={cn(
+                        "box-border w-full min-w-0 rounded-md border px-3 py-2.5 text-left text-sm transition-colors",
+                        idx === selectedIndex
+                          ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500/20"
+                          : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                      )}
+                    >
+                      <div className="truncate font-medium text-slate-900">{s.name}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        {typeof s.popularityScore === "number"
+                          ? `Popularity ${s.popularityScore.toFixed(1)}`
+                          : "Popularity n/a"}
+                        {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
                       </div>
-                      <Button type="button" variant="outline" size="sm" onClick={() => swapWithAlternative(idx)}>
-                        Swap
-                      </Button>
+                    </button>
+                  ))}
+                  {selectedStops.length === 0 && (
+                    <p className="text-xs text-slate-500">Pick a destination and tap Refresh to load stops.</p>
+                  )}
+                </div>
+              </div>
+              <div className="min-w-0 overflow-hidden rounded-lg border p-3">
+                <p className="mb-2 text-xs font-semibold text-slate-700">
+                  Popular alternatives in this area
+                </p>
+                <div className="max-h-60 min-w-0 space-y-2 overflow-y-auto overflow-x-hidden pr-1">
+                  {alternativeStops.map((s, idx) => (
+                    <div
+                      key={`${s.name}-${s.lat}-${s.lng}`}
+                      className="box-border min-w-0 rounded-md border border-slate-200 px-3 py-2.5"
+                    >
+                      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-slate-800">{s.name}</p>
+                          <p className="mt-0.5 truncate text-xs text-slate-500">
+                            {typeof s.popularityScore === "number"
+                              ? `Popularity ${s.popularityScore.toFixed(1)}`
+                              : "Popularity n/a"}
+                            {s.category ? ` • ${s.category.replace(/_/g, " ")}` : ""}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 shrink-0 self-start px-3 sm:mt-0.5"
+                          onClick={() => swapWithAlternative(idx)}
+                        >
+                          Swap in
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-                {alternativeStops.length === 0 && (
-                  <p className="text-xs text-slate-500">No alternatives loaded yet.</p>
-                )}
+                  ))}
+                  {alternativeStops.length === 0 && (
+                    <p className="text-xs text-slate-500">No alternatives loaded yet.</p>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
           </div>
 
           <div className="mt-7 flex justify-end">
@@ -1006,24 +1177,29 @@ export default function GenerateTripPage() {
           </div>
         </section>
 
-        <section className="mt-12">
-          <div className="mb-5 flex items-end justify-between">
+        <section ref={popularSectionRef} className="mt-12 scroll-mt-24">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-4xl font-bold tracking-tight text-slate-900">Popular destinations</h2>
               <p className="mt-1 text-lg text-slate-600">
                 Recommended cities near your current location or frequent searches.
               </p>
             </div>
-            <button
-              type="button"
-              className="hidden items-center gap-1 text-sm font-semibold text-slate-700 md:flex"
-            >
-              View all
-              <ChevronRight className="h-4 w-4" />
-            </button>
+            {canTogglePopularViewAll && (
+              <button
+                type="button"
+                onClick={handlePopularViewToggle}
+                className="flex shrink-0 items-center gap-1 self-start text-sm font-semibold text-slate-700 hover:text-slate-900 sm:self-auto"
+              >
+                {showAllPopular ? "Show less" : "View all"}
+                <ChevronRight
+                  className={cn("h-4 w-4 transition-transform", showAllPopular && "rotate-90")}
+                />
+              </button>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {popularByLocation.map((d) => {
+            {popularDisplayed.map((d) => {
               const key = `${d.name}-${d.country}`;
               const creating = loadingPopularKey === key;
               const selected =

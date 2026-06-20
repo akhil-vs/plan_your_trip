@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useAdminAccess } from "@/contexts/AdminAccessContext";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SiteLogoLink } from "@/components/ui/SiteLogoLink";
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check, Loader2 } from "lucide-react";
+import { openBillingPortal, startCheckout } from "@/lib/billing/checkoutClient";
 
 type Plan = "FREE" | "PRO" | "TEAM";
 
@@ -21,11 +22,25 @@ const PLAN_FEATURES: Record<Plan, string[]> = {
 };
 
 export default function ProfilePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gray-50 p-6">Loading profile...</div>}>
+      <ProfileContent />
+    </Suspense>
+  );
+}
+
+function ProfileContent() {
   const { data: session, status, update } = useSession();
   const { isAdmin: isAdminUser, ready: adminReady } = useAdminAccess();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [plan, setPlan] = useState<Plan>("FREE");
-  const [savingPlan, setSavingPlan] = useState<Plan | null>(null);
+  const [billingLoading, setBillingLoading] = useState<"PRO" | "TEAM" | "portal" | null>(null);
+  const [billingConfig, setBillingConfig] = useState({
+    stripeEnabled: false,
+    proCheckout: false,
+    teamCheckout: false,
+  });
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -36,25 +51,42 @@ export default function ProfilePage() {
     if (session?.user?.plan) setPlan(session.user.plan);
   }, [session?.user?.plan]);
 
-  const updatePlan = async (nextPlan: Plan) => {
-    setSavingPlan(nextPlan);
+  useEffect(() => {
+    fetch("/api/billing/config")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setBillingConfig(data);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const billing = searchParams.get("billing");
+    if (billing === "success") {
+      setMessage("Thanks — your subscription is updating. Refresh if your plan has not changed yet.");
+      void update();
+    }
+  }, [searchParams, update]);
+
+  const runCheckout = async (target: "PRO" | "TEAM") => {
+    setBillingLoading(target);
     setMessage("");
     try {
-      const res = await fetch("/api/account/plan", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: nextPlan }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        setMessage(data?.error || "Failed to update membership");
-        return;
-      }
-      setPlan(data.plan);
-      await update({ plan: data.plan });
-      setMessage(`Membership updated to ${data.plan}.`);
-    } finally {
-      setSavingPlan(null);
+      await startCheckout(target);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Checkout failed");
+      setBillingLoading(null);
+    }
+  };
+
+  const runPortal = async () => {
+    setBillingLoading("portal");
+    setMessage("");
+    try {
+      await openBillingPortal();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not open billing portal");
+      setBillingLoading(null);
     }
   };
 
@@ -83,12 +115,18 @@ export default function ProfilePage() {
           <CardHeader>
             <CardTitle>Membership</CardTitle>
             <CardDescription>
-              Manage your plan and unlock collaboration and premium export features.
+              {billingConfig.stripeEnabled
+                ? "Upgrade through secure checkout. Manage or cancel anytime from the billing portal."
+                : "Billing is not configured on this server. Contact hello@viazo.app for Pro or Team access."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {(["FREE", "PRO", "TEAM"] as Plan[]).map((tier) => {
               const active = plan === tier;
+              const isPaidTier = tier === "PRO" || tier === "TEAM";
+              const checkoutReady =
+                tier === "PRO" ? billingConfig.proCheckout : billingConfig.teamCheckout;
+
               return (
                 <div key={tier} className="rounded-lg border bg-white p-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -105,18 +143,77 @@ export default function ProfilePage() {
                       <li key={feature}>- {feature}</li>
                     ))}
                   </ul>
-                  <Button
-                    size="sm"
-                    className="w-full"
-                    variant={active ? "outline" : "default"}
-                    disabled={active || savingPlan !== null}
-                    onClick={() => updatePlan(tier)}
-                  >
-                    {savingPlan === tier ? "Updating..." : active ? "Current plan" : `Switch to ${tier}`}
-                  </Button>
+                  {tier === "FREE" ? (
+                    <Button size="sm" className="w-full" variant="outline" disabled>
+                      {active ? "Current plan" : "Included"}
+                    </Button>
+                  ) : tier === "TEAM" && !checkoutReady ? (
+                    <Link
+                      href="mailto:hello@viazo.app?subject=Viazo%20Team%20plan"
+                      className={cn(buttonVariants({ size: "sm" }), "w-full")}
+                    >
+                      Contact sales
+                    </Link>
+                  ) : active ? (
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      variant="outline"
+                      disabled={!billingConfig.stripeEnabled || billingLoading !== null}
+                      onClick={() => void runPortal()}
+                    >
+                      {billingLoading === "portal" ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        "Manage billing"
+                      )}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!checkoutReady || billingLoading !== null}
+                      onClick={() => void runCheckout(tier)}
+                    >
+                      {billingLoading === tier ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Redirecting…
+                        </>
+                      ) : (
+                        `Upgrade to ${tier}`
+                      )}
+                    </Button>
+                  )}
+                  {isPaidTier && !checkoutReady && billingConfig.stripeEnabled && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Stripe price not configured for {tier}.
+                    </p>
+                  )}
                 </div>
               );
             })}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Account</CardTitle>
+            <CardDescription>{session?.user?.email}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            <Link href="/auth/forgot-password" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+              Change password
+            </Link>
+            <Link href="/legal/privacy" className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+              Privacy
+            </Link>
+            <Link href="/legal/terms" className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+              Terms
+            </Link>
           </CardContent>
         </Card>
 
@@ -124,9 +221,7 @@ export default function ProfilePage() {
           <Card>
             <CardHeader>
               <CardTitle>Admin tools</CardTitle>
-              <CardDescription>
-                Manage user memberships and platform-level options.
-              </CardDescription>
+              <CardDescription>Manual plan overrides and platform oversight.</CardDescription>
             </CardHeader>
             <CardContent>
               <Link href="/admin" className={cn(buttonVariants(), "inline-flex")}>
@@ -141,4 +236,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-

@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { PlannerSidebar } from "@/components/sidebar/PlannerSidebar";
+import { PlannerShell } from "@/components/planner/PlannerShell";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const MapView = dynamic(
@@ -20,11 +21,9 @@ const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 
 export default function PlannerPage() {
   return (
-    <div className="flex h-full min-h-0 w-full max-w-full overflow-hidden">
-      <PlannerSidebar />
-      <div className="flex-1 relative overflow-visible min-w-0 min-h-0">
-        <MapView mapboxToken={mapboxToken} />
-      </div>
-    </div>
+    <PlannerShell
+      sidebar={<PlannerSidebar />}
+      map={<MapView mapboxToken={mapboxToken} />}
+    />
   );
 }

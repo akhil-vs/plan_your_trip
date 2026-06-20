@@ -63,6 +63,45 @@ You must use a **hosted PostgreSQL** database.
 2. Run `npx prisma db push` against your production database (or use `prisma migrate deploy` if you use migrations).
 3. Redeploy on Vercel.
 
+### `prisma bootstrap` overwrote `.env` and broke local migrate
+
+`prisma bootstrap` writes a **cloud** `DATABASE_URL` (often `db.prisma.io`) into `.env`. If that host is down or unreachable from your machine, `prisma migrate dev` fails with P1001.
+
+**Local development:** keep `.env` as Docker:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/viazo
+```
+
+Then: `docker compose up -d` and `npx prisma db push`.
+
+**Production only:** put the cloud URL in **Vercel → Environment Variables**, not in local `.env`, unless you use a separate file (see `.env.prisma.example`).
+
+---
+
+### Error: `Can't reach database server at db.prisma.io:5432` (e.g. viazo.cc)
+
+This means **Production `DATABASE_URL` points at `db.prisma.io`**, which is not reachable from your Vercel deployment (expired Prisma-hosted DB, wrong URL, or a template placeholder).
+
+**Fix (Vercel dashboard):**
+
+1. Open the **viazo.cc** project → **Settings → Environment Variables**.
+2. Create or replace **`DATABASE_URL`** for **Production** with a live Postgres URL, for example:
+   - **Vercel Postgres**: Storage → Create Database → Postgres, then copy the connection string into `DATABASE_URL`.
+   - **Neon**: [neon.tech](https://neon.tech) → connection string with `?sslmode=require`.
+3. Do **not** use `file:./dev.db` or a dead `db.prisma.io` URL.
+4. From your machine (with the new URL in env):  
+   `npx prisma db push`  
+   (or `npx prisma migrate deploy` if you use migrations).
+5. **Redeploy** Production so serverless functions load the new variable.
+
+**Verify locally** (optional):
+
+```bash
+# After vercel env pull .env.production.local  OR paste DATABASE_URL into .env
+node scripts/check-database.mjs
+```
+
 ---
 
 ## 3. Verifying

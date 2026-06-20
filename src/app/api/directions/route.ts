@@ -35,6 +35,13 @@ async function fetchMapboxRouteDirect(
     overview: "full",
     steps: "false",
   });
+  if (process.env.DIRECTIONS_LOG_MAPBOX_CALLS === "1") {
+    const segments = coordinates.split(";").filter(Boolean).length;
+    console.info("[directions] Mapbox Directions API request (cache miss path)", {
+      profile,
+      coordinatePairs: segments,
+    });
+  }
   const res = await fetch(
     `https://api.mapbox.com/directions/v5/${profile}/${coordinates}?${params}`
   );

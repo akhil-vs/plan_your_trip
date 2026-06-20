@@ -36,6 +36,7 @@ type SearchLocationOptions = {
   bbox?: [number, number, number, number];
   limit?: number;
   types?: string;
+  context?: "generate" | "planner";
   signal?: AbortSignal;
   sessionToken?: string;
 };
@@ -327,7 +328,9 @@ export const api = {
         ? options.bbox.map((v) => Number(v).toFixed(4)).join(",")
         : "none";
     const typesKey = options?.types?.trim() || "poi,address,place,locality,neighborhood,district,region,country";
-    const cacheKey = `${normalizedQuery}|${proximityKey}|${bboxKey}|${limit}|${typesKey}`;
+    const contextKey = options?.context?.trim() || "default";
+    const useUnifiedDestinationSearch = !options?.types;
+    const cacheKey = `${normalizedQuery}|${proximityKey}|${bboxKey}|${limit}|${typesKey}|${contextKey}|${useUnifiedDestinationSearch ? "unified" : "legacy"}`;
     const cached = await getSearchCache("search-locations", searchLocationsCache, cacheKey);
     if (cached) return cached;
     const canShareInflight = !options?.signal;
@@ -335,7 +338,65 @@ export const api = {
       const inflight = inflightSearchLocations.get(cacheKey);
       if (inflight) return inflight;
     }
+    const sessionToken = options?.sessionToken || randomUUID();
     const requestPromise = (async () => {
+      if (useUnifiedDestinationSearch) {
+        const params = new URLSearchParams({
+          q: normalizedQuery,
+          limit,
+          language: "en",
+          session_token: sessionToken,
+        });
+        if (proximity) params.set("proximity", `${proximity.lng},${proximity.lat}`);
+        if (options?.context) params.set("context", options.context);
+        const suggestions = await request<
+          Array<{ id: string; name: string; fullName: string; featureType?: string; lat?: number; lng?: number }>
+        >(`/api/search?${params.toString()}`, {
+          auth: false,
+          signal: options?.signal,
+        }).catch(() => []);
+        const rowsWithCoords = await Promise.all(
+          (Array.isArray(suggestions) ? suggestions : []).slice(0, Number(limit)).map(async (item) => {
+            if (!item?.id || typeof item.name !== "string") return null;
+            if (Number.isFinite(item.lat) && Number.isFinite(item.lng)) {
+              return {
+                id: String(item.id),
+                name: String(item.name),
+                fullName: String(item.fullName ?? item.name),
+                lat: Number(item.lat),
+                lng: Number(item.lng),
+              } as LocationSearchResult;
+            }
+            const retrieveParams = new URLSearchParams({
+              mapbox_id: String(item.id),
+              language: "en",
+              session_token: sessionToken,
+            });
+            const retrieved = await request<{
+              id: string;
+              name: string;
+              fullName: string;
+              lat: number;
+              lng: number;
+            }>(`/api/search?${retrieveParams.toString()}`, {
+              auth: false,
+              signal: options?.signal,
+            }).catch(() => null);
+            if (!retrieved || !Number.isFinite(retrieved.lat) || !Number.isFinite(retrieved.lng)) return null;
+            return {
+              id: String(retrieved.id),
+              name: String(retrieved.name),
+              fullName: String(retrieved.fullName ?? retrieved.name),
+              lat: Number(retrieved.lat),
+              lng: Number(retrieved.lng),
+            } as LocationSearchResult;
+          })
+        );
+        const rows = rowsWithCoords.filter((v: LocationSearchResult | null): v is LocationSearchResult => Boolean(v));
+        await setSearchCache("search-locations", searchLocationsCache, cacheKey, rows);
+        return rows;
+      }
+
       const params = new URLSearchParams({
         access_token: token,
         autocomplete: "true",
@@ -347,8 +408,8 @@ export const api = {
       if (options?.bbox && options.bbox.length === 4) {
         params.set("bbox", options.bbox.map((v) => String(v)).join(","));
       }
-      if (options?.sessionToken) {
-        params.set("session_token", options.sessionToken);
+      if (sessionToken) {
+        params.set("session_token", sessionToken);
       }
       const payload = await fetchJsonWithRetry<{ features?: unknown[] }>(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encoded}.json?${params.toString()}`,

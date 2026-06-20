@@ -1,4 +1,5 @@
 import { randomUUID } from "@/lib/randomUuid";
+import { haversineKm } from "@/lib/optimize/travelAndOrder";
 import { getOrSetCache, normalizeCoord } from "@/lib/server/memoryCache";
 
 export type ResolvedDestination = {
@@ -8,6 +9,7 @@ export type ResolvedDestination = {
   lat: number;
   lng: number;
   bbox?: [number, number, number, number];
+  featureType?: string;
 };
 
 export type MapboxAreaCandidate = {
@@ -89,12 +91,19 @@ async function mapboxRetrieve(
   const props = feature.properties || {};
   const [lng, lat] = feature.geometry.coordinates as [number, number];
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const featureType =
+    typeof props.feature_type === "string"
+      ? props.feature_type
+      : typeof props.category === "string"
+        ? props.category
+        : undefined;
   return {
     mapboxId,
     name: props.name || props.place_formatted || "Destination",
     fullName: props.full_address || props.place_formatted || props.name || "Destination",
     lat,
     lng,
+    featureType,
     bbox:
       Array.isArray(feature.bbox) &&
       feature.bbox.length === 4 &&
@@ -113,6 +122,101 @@ const TTL_SUGGEST_MS = 60 * 60 * 1000;
 const TTL_RETRIEVE_MS = 24 * 60 * 60 * 1000;
 const TTL_AREA_CANDIDATES_MS = 30 * 60 * 1000;
 const AREA_CACHE_KEY_VERSION = "v2";
+
+const AREA_FEATURE_TYPES = new Set([
+  "country",
+  "region",
+  "district",
+  "place",
+  "locality",
+  "neighborhood",
+]);
+
+const POI_FEATURE_TYPES = new Set(["poi", "landmark", "attraction", "establishment"]);
+
+function bboxSpanKm(bbox: [number, number, number, number]): number {
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const centerLat = (minLat + maxLat) / 2;
+  const latSpan = haversineKm(
+    { name: "", lat: minLat, lng: minLng },
+    { name: "", lat: maxLat, lng: minLng }
+  );
+  const lngSpan = haversineKm(
+    { name: "", lat: centerLat, lng: minLng },
+    { name: "", lat: centerLat, lng: maxLng }
+  );
+  return Math.max(latSpan, lngSpan);
+}
+
+async function reverseGeocodeParentArea(
+  lat: number,
+  lng: number,
+  token: string,
+  language: string
+): Promise<ResolvedDestination | null> {
+  const params = new URLSearchParams({
+    access_token: token,
+    language,
+    types: "place,locality,region,district",
+    limit: "1",
+  });
+  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?${params}`;
+  const res = await fetch(url).catch(() => null);
+  if (!res || !res.ok) return null;
+  const data = await res.json().catch(() => null);
+  const feature = Array.isArray(data?.features) ? data.features[0] : null;
+  if (!feature?.geometry?.coordinates) return null;
+  const props = feature.properties || {};
+  const [parentLng, parentLat] = feature.geometry.coordinates as [number, number];
+  if (!Number.isFinite(parentLat) || !Number.isFinite(parentLng)) return null;
+  const bbox =
+    Array.isArray(feature.bbox) &&
+    feature.bbox.length === 4 &&
+    feature.bbox.every((v: unknown) => Number.isFinite(Number(v)))
+      ? [
+          Number(feature.bbox[0]),
+          Number(feature.bbox[1]),
+          Number(feature.bbox[2]),
+          Number(feature.bbox[3]),
+        ]
+      : undefined;
+  return {
+    mapboxId: String(feature.id || `${parentLat}:${parentLng}`),
+    name: String(props.name || feature.text || "Destination"),
+    fullName: String(props.full_address || feature.place_name || props.name || "Destination"),
+    lat: parentLat,
+    lng: parentLng,
+    bbox: bbox as [number, number, number, number] | undefined,
+    featureType: typeof feature.place_type?.[0] === "string" ? feature.place_type[0] : "place",
+  };
+}
+
+async function expandToSurroundingArea(
+  resolved: ResolvedDestination,
+  token: string,
+  language: string
+): Promise<ResolvedDestination> {
+  const featureType = (resolved.featureType || "").toLowerCase();
+  const hasUsableBbox =
+    resolved.bbox && bboxSpanKm(resolved.bbox) >= 12;
+
+  if (AREA_FEATURE_TYPES.has(featureType) && hasUsableBbox) {
+    return resolved;
+  }
+
+  if (!POI_FEATURE_TYPES.has(featureType) && hasUsableBbox) {
+    return resolved;
+  }
+
+  const parent = await reverseGeocodeParentArea(resolved.lat, resolved.lng, token, language);
+  if (!parent) return resolved;
+
+  return {
+    ...parent,
+    name: parent.name || resolved.name,
+    fullName: parent.fullName || resolved.fullName,
+  };
+}
 
 function normalizeSearchQuery(q: string): string {
   return q.trim().toLowerCase().replace(/\s+/g, " ");
@@ -133,9 +237,11 @@ export async function resolveDestination(input: {
 
   if (input.mapboxId?.trim()) {
     const id = input.mapboxId.trim();
-    return getOrSetCache(`mapbox:retrieve:${language}:${id}`, TTL_RETRIEVE_MS, () =>
+    const resolved = await getOrSetCache(`mapbox:retrieve:${language}:${id}`, TTL_RETRIEVE_MS, () =>
       mapboxRetrieve(id, language, token, sessionToken)
     );
+    if (!resolved) return null;
+    return expandToSurroundingArea(resolved, token, language);
   }
 
   const q = normalizeSearchQuery(input.destinationQuery ?? "");
@@ -148,9 +254,11 @@ export async function resolveDestination(input: {
   );
   const first = suggestions[0];
   if (!first?.id) return null;
-  return getOrSetCache(`mapbox:retrieve:${language}:${first.id}`, TTL_RETRIEVE_MS, () =>
+  const resolved = await getOrSetCache(`mapbox:retrieve:${language}:${first.id}`, TTL_RETRIEVE_MS, () =>
     mapboxRetrieve(first.id, language, token, sessionToken)
   );
+  if (!resolved) return null;
+  return expandToSurroundingArea(resolved, token, language);
 }
 
 /**
@@ -184,19 +292,28 @@ export async function fetchMapboxAreaCandidates(input: {
     "historic site",
   ];
   const localityQueries = ["town", "village", "coastal town"];
-  const hotspotNameQueries = [
+  const genericHotspotQueries = [
+    "top tourist attractions",
+    "famous landmark",
+    "historic old town",
+    "viewpoint",
+    "national museum",
+    "castle",
+    "cathedral",
+    "harbour",
+    "promenade",
+    "historic quarter",
+    "beach",
+  ];
+  const cornwallHotspotQueries = [
     "land's end",
     "lands end",
     "st ives",
     "penzance",
     "st michael's mount",
     "st michaels mount",
-    "harbour",
-    "old town",
-    "cliff",
-    "promenade",
-    "historic quarter",
   ];
+  const maxFetchKm = bbox ? Math.min(48, 22 + days * 4) : Math.min(42, 18 + days * 3);
   const ring = Math.min(12, Math.max(6, days + 4));
   const seeds: Array<{ lat: number; lng: number }> = [{ lat, lng }];
   if (bbox && bbox.length === 4) {
@@ -237,6 +354,15 @@ export async function fetchMapboxAreaCandidates(input: {
   const uniqueSeeds = dedupeSeeds(seeds);
   const out: MapboxAreaCandidate[] = [];
   const perReq = Math.min(24, Math.max(8, Math.ceil((limit * 2) / Math.max(1, uniqueSeeds.length))));
+
+  const pushIfNear = (row: MapboxAreaCandidate) => {
+    const km = haversineKm(
+      { name: "", lat, lng },
+      { name: "", lat: row.lat, lng: row.lng }
+    );
+    if (km <= maxFetchKm) out.push(row);
+  };
+
   for (const seed of uniqueSeeds) {
     for (const q of poiQueries) {
       const params = new URLSearchParams({
@@ -260,7 +386,7 @@ export async function fetchMapboxAreaCandidates(input: {
           String(props.place_formatted || "").trim();
         if (!name) continue;
         const category = typeof props?.category === "string" ? props.category : "poi";
-        out.push({
+        pushIfNear({
           name,
           lng: Number(coords[0]),
           lat: Number(coords[1]),
@@ -289,7 +415,7 @@ export async function fetchMapboxAreaCandidates(input: {
           String(props.name || f?.text || "").trim() ||
           String(props.place_formatted || "").trim();
         if (!name) continue;
-        out.push({
+        pushIfNear({
           name,
           lng: Number(coords[0]),
           lat: Number(coords[1]),
@@ -299,12 +425,22 @@ export async function fetchMapboxAreaCandidates(input: {
     }
   }
   if (destinationLabel?.trim()) {
-    for (const q of hotspotNameQueries) {
+    const labelKey = normalizeSearchQuery(destinationLabel);
+    const hotspotQueries = [
+      ...genericHotspotQueries,
+      ...(labelKey.includes("cornwall") ||
+      labelKey.includes("penzance") ||
+      labelKey.includes("st ives") ||
+      labelKey.includes("lands end")
+        ? cornwallHotspotQueries
+        : []),
+    ];
+    for (const q of hotspotQueries) {
       const params = new URLSearchParams({
         access_token: token,
         language,
         limit: "6",
-        types: "poi,place,locality",
+        types: "poi",
         proximity: `${lng},${lat}`,
       });
       const contextual = `${q} ${destinationLabel.trim()}`;
@@ -321,11 +457,11 @@ export async function fetchMapboxAreaCandidates(input: {
           String(props.name || f?.text || "").trim() ||
           String(props.place_formatted || "").trim();
         if (!name) continue;
-        out.push({
+        pushIfNear({
           name,
           lng: Number(coords[0]),
           lat: Number(coords[1]),
-          category: "must_see",
+          category: "attraction",
         });
       }
     }

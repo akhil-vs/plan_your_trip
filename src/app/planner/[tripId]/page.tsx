@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { PlannerSidebar } from "@/components/sidebar/PlannerSidebar";
+import { PlannerShell } from "@/components/planner/PlannerShell";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useParams } from "next/navigation";
 
@@ -24,11 +25,9 @@ export default function EditTripPage() {
   const tripId = params.tripId as string;
 
   return (
-    <div className="flex h-full min-h-0 w-full max-w-full overflow-hidden">
-      <PlannerSidebar tripId={tripId} />
-      <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden">
-        <MapView mapboxToken={mapboxToken} />
-      </div>
-    </div>
+    <PlannerShell
+      sidebar={<PlannerSidebar tripId={tripId} />}
+      map={<MapView mapboxToken={mapboxToken} />}
+    />
   );
 }

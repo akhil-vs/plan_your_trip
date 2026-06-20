@@ -35,12 +35,22 @@ const normalizeQuery = (query: string) => query.trim().toLowerCase().replace(/\s
 const searchStorageKey = (bucket: string, cacheKey: string) =>
   `plan-your-trip:${bucket}:${encodeURIComponent(cacheKey)}`;
 
-function getSearchCacheKey(query: string, proximity?: { lng: number; lat: number }): string {
+function getSearchCacheKey(
+  query: string,
+  proximity?: { lng: number; lat: number },
+  context?: string
+): string {
   const prox = proximity
     ? `${Math.round(proximity.lng * 100) / 100},${Math.round(proximity.lat * 100) / 100}`
     : "";
-  return `${query}|${prox}`;
+  const ctx = context?.trim() || "default";
+  return `${query}|${prox}|${ctx}`;
 }
+
+export type SearchLocationOptions = {
+  context?: "generate" | "planner";
+  limit?: number;
+};
 
 const isSearchResult = (value: unknown): value is SearchResult => {
   if (!value || typeof value !== "object") return false;
@@ -138,12 +148,13 @@ function setCachedValue<T>(
 
 export async function searchLocations(
   query: string,
-  proximity?: { lng: number; lat: number }
+  proximity?: { lng: number; lat: number },
+  options?: SearchLocationOptions
 ): Promise<SearchResult[]> {
   const normalized = normalizeQuery(query);
   if (normalized.length < 3) return [];
 
-  const cacheKey = getSearchCacheKey(normalized, proximity);
+  const cacheKey = getSearchCacheKey(normalized, proximity, options?.context);
   const cached = getCachedValue(
     "web-search",
     searchCache,
@@ -159,12 +170,13 @@ export async function searchLocations(
   const request = (async () => {
     const params = new URLSearchParams({
       q: normalized,
-      limit: "6",
+      limit: String(options?.limit ?? 8),
       language: "en",
       session_token: searchSessionToken,
       ...(proximity && {
         proximity: `${proximity.lng},${proximity.lat}`,
       }),
+      ...(options?.context && { context: options.context }),
     });
 
     const res = await fetch(`/api/search?${params}`);
@@ -221,7 +233,8 @@ export interface DirectionsResult {
 }
 
 export async function getDirections(
-  coordinates: [number, number][]
+  coordinates: [number, number][],
+  options?: { signal?: AbortSignal }
 ): Promise<DirectionsResult | null> {
   if (coordinates.length < 2) return null;
 
@@ -230,7 +243,7 @@ export async function getDirections(
     coordinates: coords,
   });
 
-  const res = await fetch(`/api/directions?${params}`);
+  const res = await fetch(`/api/directions?${params}`, { signal: options?.signal });
   if (!res.ok) return null;
   return res.json();
 }

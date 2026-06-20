@@ -13,11 +13,13 @@ function normalizeSuggestCacheKey(
   q: string,
   proximity: string | null,
   language: string,
-  limit: string
+  limit: string,
+  context: string | null
 ): string[] {
   const trimmed = normalizeSearchQuery(q);
   const prox = proximity ? proximity.replace(/\s/g, "") : "";
-  return ["search", "suggest", trimmed, prox, language.trim().toLowerCase(), limit];
+  const ctx = context?.trim().toLowerCase() || "default";
+  return ["search", "suggest", trimmed, prox, language.trim().toLowerCase(), limit, ctx];
 }
 
 function normalizeRetrieveCacheKey(mapboxId: string, language: string): string[] {
@@ -111,19 +113,23 @@ async function fetchMapboxSuggest(
   limit: string,
   language: string,
   token: string,
-  sessionToken: string
+  sessionToken: string,
+  context: string | null
 ) {
-  const allowedFeatureTypes = new Set([
-    "country",
-    "region",
-    "district",
-    "place",
-    "locality",
-    "neighborhood",
-  ]);
+  const isGenerateContext = context === "generate";
+  const typeGroups = {
+    poiLike: new Set(["poi", "landmark", "attraction", "establishment"]),
+    areaLike: new Set(["country", "region", "district", "place", "locality", "neighborhood"]),
+    addressLike: new Set(["address", "street", "postcode"]),
+  };
   const roadLike = /\b(street|st|road|rd|avenue|ave|lane|ln|highway|hwy|boulevard|blvd|drive|dr)\b/i;
   const featureWeight = (t?: string) => {
     switch ((t || "").toLowerCase()) {
+      case "poi":
+      case "landmark":
+      case "attraction":
+      case "establishment":
+        return 78;
       case "place":
       case "locality":
         return 80;
@@ -134,12 +140,19 @@ async function fetchMapboxSuggest(
         return 62;
       case "neighborhood":
         return 50;
+      case "address":
+      case "street":
+        return 46;
+      case "postcode":
+        return 38;
       default:
         return 30;
     }
   };
   const qNorm = normalizeText(q);
   const qTokens = qNorm.split(" ").filter(Boolean);
+  const isGenericGeoQuery = qTokens.length <= 1 && qNorm.length <= 12;
+  const isSpecificPoiQuery = qTokens.length >= 2;
   const countryHint = await getCountryHintFromProximity(proximity, token, language);
   const countryNorm = countryHint ? normalizeText(countryHint.countryName) : "";
   const params = new URLSearchParams({
@@ -148,8 +161,9 @@ async function fetchMapboxSuggest(
     session_token: sessionToken,
     limit,
     language,
-    // Prefer destination-like geographies over business POIs/addresses.
-    types: "country,region,district,place,locality,neighborhood,postcode",
+    types: isGenerateContext
+      ? "country,region,district,place,locality,neighborhood,poi"
+      : "poi,address,street,postcode,neighborhood,locality,district,place,region,country",
   });
   if (proximity) params.set("proximity", proximity);
 
@@ -165,12 +179,17 @@ async function fetchMapboxSuggest(
   const data = await res.json();
   const suggestions = (data.suggestions || [])
     .filter(
-      (s: { mapbox_id?: string; feature_type?: string; name?: string }) =>
-        s.mapbox_id &&
-        typeof s.feature_type === "string" &&
-        allowedFeatureTypes.has(s.feature_type) &&
-        typeof s.name === "string" &&
-        s.name.trim().length > 0
+      (s: { mapbox_id?: string; feature_type?: string; name?: string }) => {
+        if (!s.mapbox_id || typeof s.name !== "string" || s.name.trim().length === 0) {
+          return false;
+        }
+        if (!isGenerateContext) return true;
+        const featureType = (s.feature_type || "").toLowerCase();
+        return (
+          typeGroups.areaLike.has(featureType) ||
+          typeGroups.poiLike.has(featureType)
+        );
+      }
     )
     .map(
       (s: {
@@ -184,14 +203,21 @@ async function fetchMapboxSuggest(
         const fullName = (s.full_address || s.place_formatted || s.name).trim();
         const nameNorm = normalizeText(name);
         const fullNorm = normalizeText(fullName);
+        const featureType = (s.feature_type || "").toLowerCase();
 
-        let score = featureWeight(s.feature_type);
+        let score = featureWeight(featureType);
         if (nameNorm === qNorm) score += 70;
         if (nameNorm.startsWith(qNorm)) score += 45;
         if (fullNorm.startsWith(qNorm)) score += 24;
-        const tokenMatches = qTokens.filter((t) => nameNorm.includes(t)).length;
+        const tokenMatches = qTokens.filter((t) => nameNorm.includes(t) || fullNorm.includes(t)).length;
         score += tokenMatches * 8;
-        if (/\d/.test(name) || roadLike.test(name)) score -= 30;
+        if (typeGroups.areaLike.has(featureType) && isGenericGeoQuery) score += 16;
+        if (typeGroups.poiLike.has(featureType) && isSpecificPoiQuery) score += 22;
+        if (typeGroups.addressLike.has(featureType) && isGenericGeoQuery) score -= 18;
+        if (isGenerateContext && typeGroups.areaLike.has(featureType)) score += 34;
+        if (isGenerateContext && typeGroups.poiLike.has(featureType)) score += 6;
+        if (isGenerateContext && typeGroups.addressLike.has(featureType)) score -= 80;
+        if ((/\d/.test(name) || roadLike.test(name)) && typeGroups.addressLike.has(featureType)) score -= 24;
         if (countryNorm && (fullNorm.includes(countryNorm) || nameNorm.includes(countryNorm))) {
           score += 36;
         } else if (countryNorm && fullNorm.length > 0) {
@@ -296,6 +322,7 @@ export async function GET(req: NextRequest) {
   const limit = searchParams.get("limit") || "8";
   const language = searchParams.get("language") || "en";
   const proximity = searchParams.get("proximity");
+  const context = searchParams.get("context");
   const sessionToken = searchParams.get("session_token") || randomUUID();
 
   if (mapboxId) {
@@ -318,10 +345,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json([], { status: 200 });
   }
 
-  const cacheKey = normalizeSuggestCacheKey(normalizedQuery, proximity, language, limit);
+  const cacheKey = normalizeSuggestCacheKey(normalizedQuery, proximity, language, limit, context);
 
   const getCachedSearch = unstable_cache(
-    () => fetchMapboxSuggest(normalizedQuery, proximity, limit, language, token, sessionToken),
+    () => fetchMapboxSuggest(normalizedQuery, proximity, limit, language, token, sessionToken, context),
     cacheKey,
     { revalidate: SUGGEST_REVALIDATE_SECONDS }
   );

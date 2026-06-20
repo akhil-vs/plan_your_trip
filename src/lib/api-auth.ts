@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { auth } from "@/lib/auth";
+import { isAdminEmail } from "@/lib/admin";
 
 /** Matches Auth.js default cookie name for non-__Secure__ dev; must match `encode` in mobile login. */
 export const AUTH_JS_SESSION_SALT = "authjs.session-token";
@@ -37,13 +38,14 @@ export async function getApiUser(request: NextRequest): Promise<ApiUser | null> 
       (typeof token.sub === "string" && token.sub) ||
       null;
     if (id) {
+      const email = (token.email as string | undefined) ?? null;
       return {
         id,
-        email: (token.email as string | undefined) ?? null,
+        email,
         name: (token.name as string | undefined) ?? null,
         plan:
           (token.plan as "FREE" | "PRO" | "TEAM" | undefined) ?? "FREE",
-        isAdmin: Boolean(token.isAdmin),
+        isAdmin: email ? isAdminEmail(email) : Boolean(token.isAdmin),
       };
     }
   }

@@ -93,6 +93,79 @@ export async function fetchNearbyAttractionStopsRadius(
   });
 }
 
+/** Approximate max width/height of a Mapbox bbox in km (for adaptive OTM sampling). */
+export function bboxSpanKm(bbox?: [number, number, number, number]): number | null {
+  if (!bbox || bbox.length !== 4) return null;
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  const centerLat = (minLat + maxLat) / 2;
+  const latKm = Math.max(0, maxLat - minLat) * 111;
+  const lngKm =
+    Math.max(0, maxLng - minLng) * 111 * Math.max(Math.cos((centerLat * Math.PI) / 180), 0.25);
+  return Math.max(latKm, lngKm);
+}
+
+export type OtmSamplingParams = {
+  ringKmOuter: number;
+  ringKmInner: number | null;
+  ringPoints: number;
+  radiusPrimaryMeters: number;
+  useBboxGrid: boolean;
+};
+
+/**
+ * Ring/radius tuned for compact cities (Edinburgh, Paris core) vs sprawling regions.
+ * OTM radius returns the nearest `limit` POIs — extra ring seeds beat a huge radius alone.
+ */
+export function computeOtmSamplingParams(
+  days: number,
+  bbox?: [number, number, number, number]
+): OtmSamplingParams {
+  const spanKm = bboxSpanKm(bbox);
+  const compact = spanKm != null && spanKm <= 28;
+  const d = Math.min(Math.max(days, 1), 14);
+
+  if (compact) {
+    return {
+      ringKmOuter: 1.5 + d * 1.4,
+      ringKmInner: 1.2,
+      ringPoints: Math.min(10, Math.max(5, d + 2)),
+      radiusPrimaryMeters: Math.min(22000, 6000 + d * 3500),
+      useBboxGrid: Boolean(bbox && bbox.length === 4),
+    };
+  }
+
+  return {
+    ringKmOuter: 8 + d * 4,
+    ringKmInner: null,
+    ringPoints: Math.min(10, Math.max(4, d + 2)),
+    radiusPrimaryMeters: Math.min(18000 + d * 4500, 50000),
+    useBboxGrid: true,
+  };
+}
+
+function dedupeAttractionStops(stops: AttractionStop[]): AttractionStop[] {
+  const out: AttractionStop[] = [];
+  for (const s of stops) {
+    const key = s.name.trim().toLowerCase();
+    let dupIndex = -1;
+    for (let i = 0; i < out.length; i += 1) {
+      const o = out[i];
+      const ok = o.name.trim().toLowerCase();
+      if (key === ok || (key.length >= 6 && ok.includes(key)) || (ok.length >= 6 && key.includes(ok))) {
+        dupIndex = i;
+        break;
+      }
+    }
+    const score = s.popularityScore ?? 0;
+    if (dupIndex >= 0) {
+      if (score > (out[dupIndex].popularityScore ?? 0)) out[dupIndex] = s;
+    } else {
+      out.push(s);
+    }
+  }
+  return out;
+}
+
 /** Sample points on a circle around `centerLat/centerLng` (degrees) for broader POI coverage. */
 export function ringSamplePointsKm(
   centerLat: number,
@@ -122,25 +195,23 @@ export async function fetchAttractionsAroundDestination(
   days: number,
   bbox?: [number, number, number, number]
 ): Promise<AttractionStop[]> {
+  const sampling = computeOtmSamplingParams(days, bbox);
   const bboxKey = bbox ? bbox.map((v) => normalizeCoord(v, 3)).join(",") : "none";
-  const cacheKey = `otm:area:${normalizeCoord(centerLat, 3)}:${normalizeCoord(centerLng, 3)}:${targetCount}:${days}:${bboxKey}`;
+  const cacheKey = `otm:area:v3:${normalizeCoord(centerLat, 3)}:${normalizeCoord(centerLng, 3)}:${targetCount}:${days}:${bboxKey}:${sampling.ringKmOuter}`;
   return getOrSetCache(cacheKey, TTL_ATTRACTION_AREA_MS, async () => {
-  const ringPoints = Math.min(10, Math.max(4, days + 2));
-  const ringKm = 16 + days * 7;
-  const radiusPrimary = Math.min(18000 + days * 4500, 50000);
-  const perQueryLimit = Math.ceil((targetCount * 1.6) / (1 + ringPoints));
+  const perQueryLimit = 50;
   const kindProfiles: Array<{ kinds: string; minRate: number }> = [
     { kinds: "interesting_places", minRate: 2 },
-    { kinds: "historic,architecture,museums,cultural", minRate: 1 },
+    { kinds: "historic,architecture,museums,cultural,castles", minRate: 1 },
     { kinds: "natural,beaches,islands,view_points", minRate: 1 },
   ];
 
   const seeds: Array<{ lat: number; lng: number }> = [{ lat: centerLat, lng: centerLng }];
-  if (bbox && bbox.length === 4) {
+  if (sampling.useBboxGrid && bbox && bbox.length === 4) {
     const [minLng, minLat, maxLng, maxLat] = bbox;
     const width = Math.max(0, maxLng - minLng);
     const height = Math.max(0, maxLat - minLat);
-    if (width > 0.04 && height > 0.04) {
+    if (width > 0.02 && height > 0.02) {
       const cols = 4;
       const rows = 4;
       for (let r = 0; r < rows; r += 1) {
@@ -155,7 +226,14 @@ export async function fetchAttractionsAroundDestination(
       }
     }
   }
-  seeds.push(...ringSamplePointsKm(centerLat, centerLng, ringKm, ringPoints));
+  if (sampling.ringKmInner != null) {
+    seeds.push(
+      ...ringSamplePointsKm(centerLat, centerLng, sampling.ringKmInner, Math.min(4, sampling.ringPoints))
+    );
+  }
+  seeds.push(
+    ...ringSamplePointsKm(centerLat, centerLng, sampling.ringKmOuter, sampling.ringPoints)
+  );
   const uniqueSeeds = dedupeSeeds(seeds);
 
   const merged: AttractionStop[] = [];
@@ -164,15 +242,15 @@ export async function fetchAttractionsAroundDestination(
       const batch = await fetchNearbyAttractionStopsRadius(
         s.lat,
         s.lng,
-        radiusPrimary,
-        Math.min(perQueryLimit, 40),
+        sampling.radiusPrimaryMeters,
+        perQueryLimit,
         profile.kinds,
         profile.minRate
       );
       merged.push(...batch);
     }
   }
-  return merged;
+  return dedupeAttractionStops(merged);
   });
 }
 

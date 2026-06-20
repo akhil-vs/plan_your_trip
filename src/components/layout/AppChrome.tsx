@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
-  Archive,
   BarChart3,
   BookOpen,
   Compass,
@@ -46,9 +45,8 @@ const APP_ROUTES = ["/dashboard", "/profile", "/admin"];
 
 const sidebarNavItems = [
   { label: "My Trips", href: "/dashboard?view=itineraries", icon: BookOpen },
+  { label: "Shared with me", href: "/dashboard?view=shared", icon: Users2 },
   { label: "Explore", href: "/dashboard?view=explore", icon: Compass },
-  { label: "Shared", href: "/dashboard?view=shared", icon: Users2 },
-  { label: "Archive", href: "/dashboard?view=archive", icon: Archive },
   { label: "Generate by destination", href: "/dashboard/generate", icon: Route },
 ];
 
