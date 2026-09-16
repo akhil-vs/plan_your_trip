@@ -19,14 +19,14 @@ export function MapStyleToggle() {
   const { mapStyle, setMapStyle } = useMapStore();
 
   return (
-    <div className="flex flex-row gap-0.5 lg:flex-col lg:gap-1 bg-white rounded-lg shadow-lg border p-0.5 sm:p-1">
+    <div className="flex flex-col gap-0.5 sm:gap-1 bg-white rounded-lg shadow-lg border p-0.5 sm:p-1">
       {styles.map((s) => (
         <Tooltip key={s.value}>
           <TooltipTrigger asChild>
             <Button
               variant={mapStyle === s.value ? "default" : "ghost"}
               size="icon"
-              className="h-9 w-9 sm:h-8 sm:w-8 min-w-9 min-h-9 sm:min-w-8 sm:min-h-8"
+              className="h-9 w-9 sm:h-8 sm:w-8 min-h-9 min-w-9 sm:min-h-8 sm:min-w-8"
               onClick={() => setMapStyle(s.value)}
             >
               <s.icon className="h-4 w-4" />

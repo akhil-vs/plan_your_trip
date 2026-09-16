@@ -1866,10 +1866,10 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   const mobileMapChrome = !sidebarOpen ? (
     <>
-      <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-[70] flex items-center gap-2 pointer-events-none">
+      <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-3 right-[3.75rem] z-[70] flex flex-wrap items-center gap-1.5 pointer-events-none sm:top-4 sm:left-4 sm:right-16 sm:gap-2">
         <Link
           href={session?.user ? "/dashboard" : "/"}
-          className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
+          className="pointer-events-auto flex h-10 w-10 min-h-10 min-w-10 items-center justify-center rounded-lg border bg-white shadow-lg hover:bg-gray-50"
           aria-label={session?.user ? "Back to dashboard" : "Back to home"}
           title={session?.user ? "Dashboard" : "Home"}
         >
@@ -1878,7 +1878,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         {adminReady && isAdminUser && (
           <Link
             href="/admin"
-            className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center text-amber-700"
+            className="pointer-events-auto flex h-10 w-10 min-h-10 min-w-10 items-center justify-center rounded-lg border bg-white text-amber-700 shadow-lg hover:bg-gray-50"
             aria-label="Admin panel"
             title="Admin panel"
           >
@@ -1886,12 +1886,12 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
           </Link>
         )}
         {session?.user ? (
-          <NotificationBell className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50 text-foreground" />
+          <NotificationBell className="pointer-events-auto h-10 w-10 min-h-10 min-w-10 border bg-white text-foreground shadow-lg hover:bg-gray-50" />
         ) : null}
         <Button
           variant="ghost"
           size="icon"
-          className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
+          className="pointer-events-auto h-10 w-10 min-h-10 min-w-10 border bg-white shadow-lg hover:bg-gray-50"
           aria-label="Open itinerary sidebar"
           onClick={() => setSidebarOpen(true)}
         >

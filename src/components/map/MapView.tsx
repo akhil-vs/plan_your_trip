@@ -195,14 +195,19 @@ export function MapView({ mapboxToken }: MapViewProps) {
       )}
       <div
         className={cn(
-          "pointer-events-none absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 z-[50] flex max-w-[min(100%,calc(100vw-4.5rem))] flex-row items-start justify-end gap-1.5 sm:top-4 sm:right-4 lg:flex-col lg:max-w-[calc(100vw-1rem)]",
+          // Always stack on the trailing edge so mobile left chrome (home / bell / sidebar)
+          // does not collide with map style + route controls in one crowded row.
+          "pointer-events-none absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 z-[50] flex flex-col items-end gap-1.5 sm:top-4 sm:right-4",
           hideMapChrome && "max-lg:hidden"
         )}
       >
-        <div className="pointer-events-auto flex flex-row items-start gap-1.5 lg:flex-col">
+        <div className="pointer-events-auto flex flex-col items-end gap-1.5">
           <MapStyleToggle />
           <RouteSummaryPanel />
-          <MapCollaborationControls />
+          {/* Chat lives in the mobile bottom menu; keep this map control for desktop. */}
+          <div className="max-lg:hidden">
+            <MapCollaborationControls />
+          </div>
         </div>
       </div>
       <WaypointExplorePanel />
