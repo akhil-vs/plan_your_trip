@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { useMapStore } from "@/stores/mapStore";
 import { useTripStore } from "@/stores/tripStore";
 import { canUseCollaboration } from "@/lib/subscription";
+import { useIsMobilePlanner } from "@/hooks/useMediaQuery";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -19,9 +20,17 @@ export function MapCollaborationControls() {
   const { data: session } = useSession();
   const tripId = useTripStore((s) => s.tripId);
   const openCollaborationPanel = useMapStore((s) => s.openCollaborationPanel);
+  const setSidebarOpen = useMapStore((s) => s.setSidebarOpen);
+  const isMobile = useIsMobilePlanner();
   const plan = session?.user?.plan || "FREE";
   const enabled = canUseCollaboration(plan);
   if (!tripId) return null;
+
+  const openChat = () => {
+    // Avoid nested mobile sheets fighting each other — close itinerary first.
+    if (isMobile) setSidebarOpen(false);
+    openCollaborationPanel("chat");
+  };
 
   const cardClass =
     "rounded-lg border bg-white p-0.5 shadow-lg sm:p-1";
@@ -62,7 +71,7 @@ export function MapCollaborationControls() {
             size="icon"
             className={btnClass}
             aria-label="Trip chat, members, and activity"
-            onClick={() => openCollaborationPanel("chat")}
+            onClick={openChat}
           >
             <MessageCircle className="h-4 w-4" />
           </Button>

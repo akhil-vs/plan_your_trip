@@ -228,6 +228,50 @@ export function AppChrome({ children }: AppChromeProps) {
             </div>
           </header>
           {children}
+          <nav
+            className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur supports-[backdrop-filter]:bg-white/90 lg:hidden"
+            aria-label="Mobile app menu"
+          >
+            <div className="mx-auto flex max-w-lg items-stretch gap-1">
+              <Link
+                href="/dashboard?view=itineraries"
+                className={cn(
+                  "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold",
+                  pathname.startsWith("/dashboard")
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-slate-600 hover:bg-slate-100"
+                )}
+              >
+                <BookOpen className="h-5 w-5" aria-hidden />
+                Trips
+              </Link>
+              <Link
+                href="/planner"
+                className={cn(
+                  "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold",
+                  pathname.startsWith("/planner")
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-slate-600 hover:bg-slate-100"
+                )}
+              >
+                <Plus className="h-5 w-5" aria-hidden />
+                Planner
+              </Link>
+              <Link
+                href="/profile"
+                className={cn(
+                  "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold",
+                  pathname.startsWith("/profile")
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-slate-600 hover:bg-slate-100"
+                )}
+              >
+                <User className="h-5 w-5" aria-hidden />
+                Profile
+              </Link>
+            </div>
+          </nav>
+          <div className="h-[4.5rem] lg:hidden" aria-hidden />
         </main>
       </div>
     </div>

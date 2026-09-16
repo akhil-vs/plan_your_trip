@@ -76,6 +76,7 @@ import {
   Shield,
   Search,
   Clock,
+  Save,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useAdminAccess } from "@/contexts/AdminAccessContext";
@@ -316,7 +317,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   const hasUnsavedChangesRef = useRef(false);
   const routeSectionRef = useRef<HTMLElement | null>(null);
   const saveInFlightRef = useRef(false);
-  const performSaveRef = useRef<(name: string) => Promise<void>>(async () => {});
+  const performSaveRef = useRef<(name: string) => Promise<boolean>>(async () => false);
   const router = useRouter();
 
   const canEditTrip =
@@ -1207,9 +1208,9 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     recalculateDayPlanTravel,
   ]);
 
-  const performSave = async (resolvedName: string) => {
-    if (!session?.user || !canEditTrip) return;
-    if (saveInFlightRef.current) return;
+  const performSave = async (resolvedName: string): Promise<boolean> => {
+    if (!session?.user || !canEditTrip) return false;
+    if (saveInFlightRef.current) return false;
     saveInFlightRef.current = true;
     const nameToPersist = resolvedName.trim() || DEFAULT_SAVE_NAME;
     setSaving(true);
@@ -1285,14 +1286,17 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
         );
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
+        return true;
       } else {
         const errorData = await res.json().catch(() => null);
         setSaveError(errorData?.error || "Failed to save itinerary");
         setTimeout(() => setSaveError(""), 4000);
+        return false;
       }
     } catch {
       setSaveError("Failed to save itinerary");
       setTimeout(() => setSaveError(""), 4000);
+      return false;
     } finally {
       setSaving(false);
       saveInFlightRef.current = false;
@@ -1300,6 +1304,66 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
   };
 
   performSaveRef.current = performSave;
+
+  const openTripChat = useCallback(() => {
+    // Nested mobile sheets dismiss each other — close itinerary before chat.
+    if (isMobile) setSidebarOpen(false);
+
+    void (async () => {
+      // Chat requires a persisted trip id — save drafts first on mobile.
+      if (
+        session?.user &&
+        canEditTrip &&
+        !effectiveTripId &&
+        waypoints.length > 0
+      ) {
+        const name = useTripStore.getState().tripName.trim() || DEFAULT_SAVE_NAME;
+        const ok = await performSaveRef.current(name);
+        if (!ok) {
+          toast.error("Save the itinerary before opening chat.");
+          return;
+        }
+      }
+      openCollaborationPanel("chat");
+    })();
+  }, [
+    isMobile,
+    setSidebarOpen,
+    session?.user,
+    canEditTrip,
+    effectiveTripId,
+    waypoints.length,
+    openCollaborationPanel,
+  ]);
+
+  const handleMobileSave = useCallback(async () => {
+    if (!session?.user) {
+      toast.error("Sign in to save your itinerary.");
+      return;
+    }
+    if (!canEditTrip) {
+      toast.error("You do not have permission to edit this itinerary.");
+      return;
+    }
+    if (!hasUnsavedChanges && effectiveTripId) {
+      toast.message("All changes are already saved.");
+      return;
+    }
+    if (waypoints.length === 0 && !effectiveTripId) {
+      toast.error("Add at least one stop before saving.");
+      return;
+    }
+    const name = useTripStore.getState().tripName.trim() || DEFAULT_SAVE_NAME;
+    const ok = await performSaveRef.current(name);
+    if (ok) toast.success("Itinerary saved.");
+    else toast.error("Failed to save itinerary.");
+  }, [
+    session?.user,
+    canEditTrip,
+    hasUnsavedChanges,
+    effectiveTripId,
+    waypoints.length,
+  ]);
 
   useEffect(() => {
     if (!session?.user || !canEditTrip) return;
@@ -1800,64 +1864,95 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
     loadActivityHistory,
   ]);
 
-  if (!sidebarOpen) {
-    return (
-      <>
-        <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-[70] flex items-center gap-2 pointer-events-none">
-          <Link
-            href={session?.user ? "/dashboard" : "/"}
-            className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
-            aria-label={session?.user ? "Back to dashboard" : "Back to home"}
-            title={session?.user ? "Dashboard" : "Home"}
-          >
-            <Home className="h-5 w-5" aria-hidden />
-          </Link>
-          {adminReady && isAdminUser && (
-            <Link
-              href="/admin"
-              className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center text-amber-700"
-              aria-label="Admin panel"
-              title="Admin panel"
-            >
-              <Shield className="h-5 w-5" aria-hidden />
-            </Link>
-          )}
-          {session?.user ? (
-            <NotificationBell className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50 text-foreground" />
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
-            aria-label="Open itinerary sidebar"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <PanelLeft className="h-5 w-5" aria-hidden />
-          </Button>
-        </div>
-        <nav
-          className="fixed bottom-0 left-0 right-0 z-[70] lg:hidden pointer-events-none"
-          aria-label="Itinerary quick access"
+  const mobileMapChrome = !sidebarOpen ? (
+    <>
+      <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-3 sm:top-4 sm:left-4 z-[70] flex items-center gap-2 pointer-events-none">
+        <Link
+          href={session?.user ? "/dashboard" : "/"}
+          className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center"
+          aria-label={session?.user ? "Back to dashboard" : "Back to home"}
+          title={session?.user ? "Dashboard" : "Home"}
         >
-          <div className="pointer-events-auto mx-auto max-w-lg px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
+          <Home className="h-5 w-5" aria-hidden />
+        </Link>
+        {adminReady && isAdminUser && (
+          <Link
+            href="/admin"
+            className="pointer-events-auto p-2 sm:p-2.5 rounded-lg bg-white shadow-lg border hover:bg-gray-50 min-w-[44px] min-h-[44px] flex items-center justify-center text-amber-700"
+            aria-label="Admin panel"
+            title="Admin panel"
+          >
+            <Shield className="h-5 w-5" aria-hidden />
+          </Link>
+        )}
+        {session?.user ? (
+          <NotificationBell className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50 text-foreground" />
+        ) : null}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-events-auto h-11 w-11 sm:h-10 sm:w-10 bg-white shadow-lg border hover:bg-gray-50"
+          aria-label="Open itinerary sidebar"
+          onClick={() => setSidebarOpen(true)}
+        >
+          <PanelLeft className="h-5 w-5" aria-hidden />
+        </Button>
+      </div>
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-[70] lg:hidden pointer-events-none"
+        aria-label="Mobile planner menu"
+      >
+        <div className="pointer-events-auto mx-auto max-w-lg px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
+          <div className="flex items-stretch gap-1 rounded-2xl border bg-white/95 p-1.5 shadow-lg backdrop-blur-sm">
             <Button
               type="button"
-              variant="secondary"
-              aria-label={`Open itinerary sidebar, ${waypoints.length} ${waypoints.length === 1 ? "stop" : "stops"}`}
-              className="w-full h-12 rounded-xl border bg-white/95 shadow-lg backdrop-blur-sm text-base font-medium gap-2"
+              variant="ghost"
+              aria-label={`Open itinerary, ${waypoints.length} ${waypoints.length === 1 ? "stop" : "stops"}`}
+              className="h-12 flex-1 flex-col gap-0.5 rounded-xl text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               onClick={() => setSidebarOpen(true)}
             >
               <MapPin className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
-              Itinerary
-              <span className="text-muted-foreground font-normal tabular-nums">
-                · {waypoints.length} {waypoints.length === 1 ? "stop" : "stops"}
+              <span>
+                Itinerary
+                <span className="text-muted-foreground font-normal tabular-nums">
+                  {" "}
+                  · {waypoints.length}
+                </span>
               </span>
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              aria-label="Open trip chat"
+              disabled={!session?.user || !collaborationEnabled}
+              className="h-12 flex-1 flex-col gap-0.5 rounded-xl text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              onClick={openTripChat}
+            >
+              <MessageCircle className="h-5 w-5 shrink-0 text-slate-700" aria-hidden />
+              Chat
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              aria-label={saving ? "Saving itinerary" : "Save itinerary"}
+              disabled={!session?.user || !canEditTrip || saving}
+              className="h-12 flex-1 flex-col gap-0.5 rounded-xl text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+              onClick={() => void handleMobileSave()}
+            >
+              {saving ? (
+                <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600" aria-hidden />
+              ) : saved && !hasUnsavedChanges ? (
+                <Check className="h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
+              ) : (
+                <Save className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
+              )}
+              {saving ? "Saving…" : saved && !hasUnsavedChanges ? "Saved" : "Save"}
+            </Button>
           </div>
-        </nav>
-      </>
-    );
-  }
+        </div>
+      </nav>
+    </>
+  ) : null;
 
   const sidebarPanel = (
     <div
@@ -1899,7 +1994,7 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
                         size="icon"
                         className="h-9 w-9 touch-manipulation rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                         aria-label="Trip chat, members, and activity"
-                        onClick={() => openCollaborationPanel("chat")}
+                        onClick={openTripChat}
                       >
                         <MessageCircle className="h-4 w-4" />
                       </Button>
@@ -2344,22 +2439,24 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
 
   return (
     <>
+      {mobileMapChrome}
       {isMobile ? (
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent
             side="left"
             showCloseButton={false}
             accessibilityTitle="Trip itinerary"
+            overlayClassName="z-[85]"
             className="z-[90] flex h-[100dvh] max-h-[100dvh] w-[min(92vw,400px)] max-w-[400px] flex-col gap-0 overflow-hidden border-0 p-0 shadow-2xl"
           >
             {sidebarPanel}
           </SheetContent>
         </Sheet>
-      ) : (
+      ) : sidebarOpen ? (
         <div className="absolute inset-y-0 left-0 z-30 hidden h-full w-[380px] lg:flex">
           {sidebarPanel}
         </div>
-      )}
+      ) : null}
 
       {/* Detail Panel overlay */}
       {selectedPOI && (
@@ -2674,7 +2771,8 @@ export function PlannerSidebar({ tripId }: PlannerSidebarProps) {
       <Sheet open={collaborationPanelOpen} onOpenChange={setCollaborationPanelOpen}>
         <SheetContent
           side="right"
-          className="h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
+          overlayClassName="z-[95]"
+          className="z-[100] h-[100dvh] max-h-[100dvh] w-full max-w-full gap-0 border-l p-0 sm:w-[min(90vw,28rem)] sm:max-w-md lg:w-[min(92vw,32rem)] lg:max-w-lg flex flex-col"
         >
           <SheetHeader className="shrink-0 space-y-1.5 border-b border-slate-200/80 bg-white px-4 py-4 pr-14 text-left">
             <SheetTitle className="flex items-center gap-2.5 text-lg font-semibold tracking-tight text-slate-900">
