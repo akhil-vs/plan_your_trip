@@ -50,16 +50,19 @@ function SheetContent({
   side = "right",
   showCloseButton = true,
   accessibilityTitle,
+  overlayClassName,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
   /** Screen-reader title when no visible SheetTitle is rendered in children. */
   accessibilityTitle?: string
+  /** Optional overlay class — use to raise stacking above other sheets (e.g. mobile planner). */
+  overlayClassName?: string
 }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      <SheetOverlay className={overlayClassName} />
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
