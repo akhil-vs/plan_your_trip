@@ -237,7 +237,7 @@ export function AppChrome({ children }: AppChromeProps) {
                 href="/dashboard?view=itineraries"
                 className={cn(
                   "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold",
-                  pathname.startsWith("/dashboard") && !pathname.startsWith("/dashboard/generate")
+                  pathname.startsWith("/dashboard")
                     ? "bg-indigo-50 text-indigo-700"
                     : "text-slate-600 hover:bg-slate-100"
                 )}
